@@ -1,0 +1,173 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-primary
+  namespace: mapreduce
+  labels:
+    app: postgres
+    role: primary
+spec:
+  serviceName: postgres-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: primary
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: primary
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: POSTGRES_HOST_AUTH_METHOD
+              value: "scram-sha-256"
+            - name: POSTGRES_INITDB_ARGS
+              value: "--auth-host=scram-sha-256 --auth-local=trust"
+
+          args:
+            - "-c"
+            - "wal_level=replica"
+            - "-c"
+            - "max_wal_senders=3"
+            - "-c"
+            - "max_replication_slots=3"
+            - "-c"
+            - "hot_standby=on"
+            - "-c"
+            - "shared_buffers=128MB"
+            - "-c"
+            - "effective_cache_size=512MB"
+            - "-c"
+            - "work_mem=4MB"
+            - "-c"
+            - "log_min_duration_statement=500"
+            - "-c"
+            - "log_connections=on"
+
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-config
+              mountPath: /docker-entrypoint-initdb.d/
+
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - mapreduce
+                - -d
+                - mapreduce
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - mapreduce
+                - -d
+                - mapreduce
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+
+      volumes:
+        - name: postgres-config
+          configMap:
+            name: postgres-init-scripts
+
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: mapreduce
+data:
+  01_replication_user.sql: |
+    CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator_dev';
+---
+# Headless service — required by StatefulSet serviceName.
+# Stable DNS per pod: postgres-primary-0.postgres-primary.mapreduce.svc.cluster.local
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: mapreduce
+  labels:
+    app: postgres
+    role: primary
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+    role: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+# NodePort — dev only. Connect from laptop:
+# psql -h $(minikube ip) -p 30532 -U mapreduce mapreduce
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-nodeport
+  namespace: mapreduce
+  labels:
+    app: postgres
+    role: primary
+spec:
+  type: NodePort
+  selector:
+    app: postgres
+    role: primary
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      nodePort: 30532
