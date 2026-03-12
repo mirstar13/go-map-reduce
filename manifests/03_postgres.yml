@@ -151,8 +151,7 @@ spec:
       port: 5432
       targetPort: 5432
 ---
-# NodePort — dev only. Connect from laptop:
-# psql -h $(minikube ip) -p 30532 -U mapreduce mapreduce
+# NodePort — dev only.
 apiVersion: v1
 kind: Service
 metadata:

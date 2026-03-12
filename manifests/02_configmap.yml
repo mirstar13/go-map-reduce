@@ -4,17 +4,43 @@ metadata:
   name: mapreduce-config
   namespace: mapreduce
 data:
+  # PostgreSQL
   POSTGRES_HOST:    "postgres-primary.mapreduce.svc.cluster.local"
   POSTGRES_PORT:    "5432"
   POSTGRES_DB:      "mapreduce"
-
-  # These are passed to the postgres container as runtime config.
-  # Sized conservatively for minikube (2 CPU / 4 GB RAM).
-  # Increase for production / Okeanos deployment.
+  # Sized conservatively for minikube.
   PG_MAX_CONNECTIONS:       "100"
   PG_SHARED_BUFFERS:        "128MB"
   PG_EFFECTIVE_CACHE_SIZE:  "512MB"
   PG_WORK_MEM:              "4MB"
-  PG_WAL_LEVEL:             "replica"   # enables streaming replication later
-  PG_MAX_WAL_SENDERS:       "3"         # max replica connections to primary
+  PG_WAL_LEVEL:             "replica"
+  PG_MAX_WAL_SENDERS:       "3"
   PG_MAX_REPLICATION_SLOTS: "3"
+
+  # MinIO
+  # Internal endpoint used by all services inside the cluster.
+  MINIO_ENDPOINT: "minio-api.mapreduce.svc.cluster.local:9000"
+  MINIO_BUCKET_INPUT:  "input"
+  MINIO_BUCKET_JOBS:   "jobs"
+  MINIO_BUCKET_OUTPUT: "output"
+  MINIO_BUCKET_CODE:   "code"
+
+  # Manager Service
+  # ClusterIP DNS used by the UI for health checks and non-routed calls.
+  MANAGER_API_URL: "http://manager-api.mapreduce.svc.cluster.local:8080"
+  # How many manager replicas are running.
+  # The UI uses this to route: replica_index = hash(job_id) % MANAGER_REPLICAS
+  # Per-replica DNS pattern: manager-{i}.manager.mapreduce.svc.cluster.local:8080
+  MANAGER_REPLICAS: "2"
+  # Namespace where worker Kubernetes Jobs are created (same namespace).
+  WORKER_NAMESPACE: "mapreduce"
+  # Docker image for worker pods — replace with your real image.
+  WORKER_IMAGE: "your-dockerhub-username/mapreduce-worker:latest"
+  TASK_TIMEOUT_SECONDS: "300"
+  TASK_MAX_RETRIES: "3"
+
+  # UI Service
+  AUTH_SERVICE_URL: "http://auth-api.mapreduce.svc.cluster.local:8082"
+
+  # Auth Service
+  JWT_EXPIRY_SECONDS: "86400"
