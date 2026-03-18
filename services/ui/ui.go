@@ -33,19 +33,19 @@ func main() {
 		log.Fatal("configuration error", zap.Error(err))
 	}
 
-	// managerClient := client.NewManagerClient(cfg)
+	managerClient := client.NewManagerClient(cfg)
 
 	keycloakClient := client.NewKeycloakClient(cfg)
 
-	//minioClient, err := client.NewMinioClient(cfg)
+	minioClient, err := client.NewMinioClient(cfg)
 	if err != nil {
 		log.Fatal("failed to init minio client", zap.Error(err))
 	}
 
 	authHandler := handler.NewAuthHandler(keycloakClient, log)
-	// jobHandler := handler.NewJobHandler(managerClient, log)
-	// fileHandler := handler.NewFileHandler(minioClient, log)
-	// adminHandler := handler.NewAdminHandler(managerClient, keycloakClient, log)
+	jobHandler := handler.NewJobHandler(managerClient, log)
+	fileHandler := handler.NewFileHandler(minioClient, log)
+	adminHandler := handler.NewAdminHandler(managerClient, keycloakClient, log)
 
 	app := fiber.New(fiber.Config{
 		// Disable Fiber's default error page to always return JSON.
@@ -92,28 +92,25 @@ func main() {
 
 	// Jobs (accessible by any authenticated user; Manager enforces ownership).
 	jobs := api.Group("/jobs", rbac.RequireAnyRole("user", "admin"))
-	// jobs.Get("/", jobHandler.ListJobs)
-	// jobs.Post("/", jobHandler.SubmitJob)
-	// jobs.Get("/:id", jobHandler.GetJob)
-	// jobs.Delete("/:id", jobHandler.CancelJob)
-	// jobs.Get("/:id/output", jobHandler.GetJobOutput)
-	_ = jobs
+	jobs.Get("/", jobHandler.ListJobs)
+	jobs.Post("/", jobHandler.SubmitJob)
+	jobs.Get("/:id", jobHandler.GetJob)
+	jobs.Delete("/:id", jobHandler.CancelJob)
+	jobs.Get("/:id/output", jobHandler.GetJobOutput)
 
 	// File uploads (accessible by any authenticated user).
 	files := api.Group("/files", rbac.RequireAnyRole("user", "admin"))
-	// files.Post("/input", fileHandler.UploadInput)
-	// files.Post("/code", fileHandler.UploadCode)
-	_ = files
+	files.Post("/input", fileHandler.UploadInput)
+	files.Post("/code", fileHandler.UploadCode)
 
 	// Admin routes — admin role required.
 	admin := api.Group("/admin", rbac.RequireAdmin())
-	// admin.Get("/jobs", adminHandler.ListAllJobs)
-	// admin.Get("/users", adminHandler.ListUsers)
-	// admin.Post("/users", adminHandler.CreateUser)
-	// admin.Get("/users/:id", adminHandler.GetUser)
-	// admin.Delete("/users/:id", adminHandler.DeleteUser)
-	// admin.Post("/users/:id/roles", adminHandler.AssignRole)
-	_ = admin
+	admin.Get("/jobs", adminHandler.ListAllJobs)
+	admin.Get("/users", adminHandler.ListUsers)
+	admin.Post("/users", adminHandler.CreateUser)
+	admin.Get("/users/:id", adminHandler.GetUser)
+	admin.Delete("/users/:id", adminHandler.DeleteUser)
+	admin.Post("/users/:id/roles", adminHandler.AssignRole)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
