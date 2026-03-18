@@ -28,3 +28,10 @@ go.work.sum
 dev
 *dev*
 .agents
+
+.g*
+
+build
+
+*.out
+coverage

@@ -4,3 +4,8 @@ minikube-start:
 	kubectl apply -f ./manifests/01_secrets.yml
 	kubectl apply -f ./manifests/02_configmap.yml
 	kubectl apply -f ./manifests/03_postgres.yml
+	kubectl apply -f ./manifests/04_keycloak.yml
+
+test-coverage:
+	go test ./pkg/middleware/auth/... -coverprofile='coverage.out'
+	go tool cover -html='coverage.out'

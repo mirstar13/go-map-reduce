@@ -5,10 +5,9 @@ metadata:
   namespace: mapreduce
 data:
   # PostgreSQL
-  POSTGRES_HOST:    "postgres-primary.mapreduce.svc.cluster.local"
-  POSTGRES_PORT:    "5432"
-  POSTGRES_DB:      "mapreduce"
-  # Sized conservatively for minikube.
+  POSTGRES_HOST:            "postgres-primary.mapreduce.svc.cluster.local"
+  POSTGRES_PORT:            "5432"
+  POSTGRES_DB:              "mapreduce"
   PG_MAX_CONNECTIONS:       "100"
   PG_SHARED_BUFFERS:        "128MB"
   PG_EFFECTIVE_CACHE_SIZE:  "512MB"
@@ -18,29 +17,29 @@ data:
   PG_MAX_REPLICATION_SLOTS: "3"
 
   # MinIO
-  # Internal endpoint used by all services inside the cluster.
-  MINIO_ENDPOINT: "minio-api.mapreduce.svc.cluster.local:9000"
+  MINIO_ENDPOINT:      "minio-api.mapreduce.svc.cluster.local:9000"
   MINIO_BUCKET_INPUT:  "input"
   MINIO_BUCKET_JOBS:   "jobs"
   MINIO_BUCKET_OUTPUT: "output"
   MINIO_BUCKET_CODE:   "code"
 
-  # Manager Service
-  # ClusterIP DNS used by the UI for health checks and non-routed calls.
-  MANAGER_API_URL: "http://manager-api.mapreduce.svc.cluster.local:8080"
-  # How many manager replicas are running.
-  # The UI uses this to route: replica_index = hash(job_id) % MANAGER_REPLICAS
-  # Per-replica DNS pattern: manager-{i}.manager.mapreduce.svc.cluster.local:8080
-  MANAGER_REPLICAS: "2"
-  # Namespace where worker Kubernetes Jobs are created (same namespace).
-  WORKER_NAMESPACE: "mapreduce"
-  # Docker image for worker pods — replace with your real image.
-  WORKER_IMAGE: "your-dockerhub-username/mapreduce-worker:latest"
-  TASK_TIMEOUT_SECONDS: "300"
-  TASK_MAX_RETRIES: "3"
+  # Manager Service 
+  MANAGER_API_URL:        "http://manager-api.mapreduce.svc.cluster.local:8080"
+  MANAGER_REPLICAS:       "2"
+  WORKER_NAMESPACE:       "mapreduce"
+  WORKER_IMAGE:           "mirstar13/mapreduce-worker:latest"
+  TASK_TIMEOUT_SECONDS:   "300"
+  TASK_MAX_RETRIES:       "3"
 
-  # UI Service
+  #  Auth / UI Service 
   AUTH_SERVICE_URL: "http://auth-api.mapreduce.svc.cluster.local:8082"
 
-  # Auth Service
+  # Keycloak
+  KEYCLOAK_URL:       "http://keycloak.mapreduce.svc.cluster.local:8080"
+  KEYCLOAK_REALM:     "mapreduce"
+  KEYCLOAK_CLIENT_ID: "mapreduce-ui"
+
+  # Misc
+  # Kept for informational use; actual expiry is controlled by Keycloak's
+  # accessTokenLifespan setting in the realm JSON above.
   JWT_EXPIRY_SECONDS: "86400"

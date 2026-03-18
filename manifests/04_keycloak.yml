@@ -1,0 +1,268 @@
+---
+# ============================================================
+# Keycloak — Identity Provider (Stateful, single replica)
+# ============================================================
+#
+# Keycloak is deployed as a StatefulSet so its persistent volume
+# survives pod restarts. A single replica is sufficient for our
+# project; a production setup would run multiple replicas behind
+# an Infinispan/JGroups cluster, which is out of scope here.
+#
+# The realm, client, and roles are imported at startup from the
+# JSON ConfigMap mounted at /opt/keycloak/data/import/.
+# Keycloak's --import-realm flag processes these files once on
+# first boot (they are ignored if the realm already exists).
+# ============================================================
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: keycloak
+  namespace: mapreduce
+  labels:
+    app: keycloak
+spec:
+  serviceName: keycloak
+  replicas: 1
+  selector:
+    matchLabels:
+      app: keycloak
+  template:
+    metadata:
+      labels:
+        app: keycloak
+    spec:
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: keycloak
+          # Pin to a specific version for reproducible builds.
+          image: quay.io/keycloak/keycloak:26.1.4
+          args:
+            - start-dev           # dev mode: embedded H2 we override to Postgres below
+            - --import-realm      # auto-import realm JSON on first boot
+
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            # Bootstrap admin credentials (first-run only)
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: KC_BOOTSTRAP_ADMIN_USERNAME
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: KC_BOOTSTRAP_ADMIN_PASSWORD
+
+            # Database (use our existing PostgreSQL)
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_DSN
+            - name: KC_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_USER
+            - name: KC_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_PASSWORD
+
+            # Hostname
+            - name: KC_HOSTNAME
+              value: "keycloak.mapreduce.svc.cluster.local"
+            - name: KC_HOSTNAME_STRICT
+              value: "false"        # allow any host in dev mode
+            - name: KC_HTTP_ENABLED
+              value: "true"
+
+            # Logging
+            - name: KC_LOG_LEVEL
+              value: "INFO"
+
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+
+          readinessProbe:
+            httpGet:
+              path: /realms/mapreduce
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 3
+
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+
+      volumes:
+        # Realm JSON is mounted from the ConfigMap below.
+        # Keycloak reads it once at startup via --import-realm.
+        - name: realm-import
+          configMap:
+            name: keycloak-realm-import
+
+---
+# ClusterIP service
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: mapreduce
+  labels:
+    app: keycloak
+spec:
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+# NodePort service (dev / port-forward access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak-nodeport
+  namespace: mapreduce
+  labels:
+    app: keycloak
+spec:
+  type: NodePort
+  selector:
+    app: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30808   # access via: minikube service keycloak-nodeport -n mapreduce
+
+---
+# ============================================================
+# Realm Bootstrap ConfigMap
+#
+# This JSON is processed by Keycloak's --import-realm flag.
+# It provisions:
+#   - realm:   "mapreduce"
+#   - client:  "mapreduce-ui"  (public OIDC client, password grant enabled)
+#   - roles:   "user", "admin"
+#   - mappers: realm_access.roles → "roles" claim in tokens
+#
+# Edit this file to add more clients, identity providers, or
+# fine-grained policies. Re-apply the ConfigMap and delete the
+# Keycloak pod to re-import (only safe if the realm does not
+# yet exist in the DB — otherwise Keycloak skips the import).
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm-import
+  namespace: mapreduce
+data:
+  mapreduce-realm.json: |
+    {
+      "realm": "mapreduce",
+      "enabled": true,
+      "displayName": "MapReduce Platform",
+      "registrationAllowed": true,
+      "loginWithEmailAllowed": true,
+      "duplicateEmailsAllowed": false,
+      "resetPasswordAllowed": false,
+      "accessTokenLifespan": 86400,
+      "ssoSessionMaxLifespan": 86400,
+
+      "roles": {
+        "realm": [
+          { "name": "user",  "description": "Regular user; can submit and view own jobs" },
+          { "name": "admin", "description": "Administrator; full system access" }
+        ]
+      },
+
+      "clients": [
+        {
+          "clientId": "mapreduce-ui",
+          "name": "MapReduce UI Service",
+          "enabled": true,
+          "publicClient": true,
+          "standardFlowEnabled": false,
+          "directAccessGrantsEnabled": true,
+          "serviceAccountsEnabled": false,
+          "redirectUris": ["*"],
+          "webOrigins": ["*"],
+          "defaultClientScopes": ["openid", "profile", "email", "roles"],
+          "optionalClientScopes": []
+        }
+      ],
+
+      "clientScopes": [
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "attributes": { "include.in.token.scope": "true" },
+          "protocolMappers": [
+            {
+              "name": "realm roles mapper",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "userinfo.token.claim": "true",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
+            }
+          ]
+        }
+      ],
+
+      "users": [
+        {
+          "username": "admin",
+          "email": "admin@mapreduce.local",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [
+            { "type": "password", "value": "admin", "temporary": false }
+          ],
+          "realmRoles": ["admin", "user"]
+        },
+        {
+          "username": "alice",
+          "email": "alice@mapreduce.local",
+          "enabled": true,
+          "emailVerified": true,
+          "credentials": [
+            { "type": "password", "value": "alice", "temporary": false }
+          ],
+          "realmRoles": ["user"]
+        }
+      ]
+    }
