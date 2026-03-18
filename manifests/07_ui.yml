@@ -1,0 +1,189 @@
+---
+# Deployment 
+# The UI service is stateless and can be safely replicated behind the Service.
+# It validates JWTs locally (via Keycloak JWKS), forwards job submissions to
+# the Manager StatefulSet, and proxies admin operations to Keycloak.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui-service
+  namespace: mapreduce
+  labels:
+    app: ui-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ui-service
+  # Rolling update: keep at least 1 pod running during rollouts.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: ui-service
+    spec:
+      # Prefer spreading replicas across nodes.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ui-service
+
+      containers:
+        - name: ui-service
+          image: mirstar13/mapreduce-ui:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8081
+              name: http
+
+          # Environment — ConfigMap 
+          env:
+            - name: UI_PORT
+              value: "8081"
+
+            # Keycloak public endpoint
+            - name: KEYCLOAK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: KEYCLOAK_URL
+            - name: KEYCLOAK_REALM
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: KEYCLOAK_REALM
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: KEYCLOAK_CLIENT_ID
+
+            # Manager service
+            - name: MANAGER_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MANAGER_API_URL
+            - name: MANAGER_REPLICAS
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MANAGER_REPLICAS
+            - name: MANAGER_HEADLESS_HOST
+              value: "manager-headless.mapreduce.svc.cluster.local"
+            - name: MANAGER_PORT
+              value: "8080"
+
+            # MinIO
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_ENDPOINT
+            - name: MINIO_BUCKET_INPUT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_BUCKET_INPUT
+            - name: MINIO_BUCKET_CODE
+              value: "code"
+            - name: MINIO_BUCKET_OUTPUT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_BUCKET_OUTPUT
+            - name: MINIO_USE_SSL
+              value: "false"
+
+            # Environment — Secrets 
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: MINIO_SECRET_KEY
+            - name: KEYCLOAK_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: KEYCLOAK_ADMIN_USER
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: KEYCLOAK_ADMIN_PASSWORD
+
+          # Health probes 
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Resource limits 
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+
+---
+# ClusterIP Service (internal access) 
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-api
+  namespace: mapreduce
+  labels:
+    app: ui-service
+spec:
+  selector:
+    app: ui-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+
+---
+# NodePort Service (external / minikube access) 
+# Use: minikube service ui-nodeport -n mapreduce
+# Or:  kubectl port-forward svc/ui-nodeport 8081:8081 -n mapreduce
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui-nodeport
+  namespace: mapreduce
+  labels:
+    app: ui-service
+spec:
+  type: NodePort
+  selector:
+    app: ui-service
+  ports:
+    - name: http
+      port: 8081
+      targetPort: 8081
+      nodePort: 30081   # CLI default: http://<minikube-ip>:30081

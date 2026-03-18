@@ -1,3 +1,59 @@
+---
+# PostgreSQL Primary — Distributed Data Service (DDS)
+#
+# Single-replica StatefulSet running postgres:16-alpine.
+# Configured for streaming replication so a hot-standby replica can connect.
+#
+# Init scripts (run once on first boot, in filename order):
+#   01_create_replicator.sh  — creates the replication role using the secret
+#   02_configure_hba.sh      — appends replication entry to pg_hba.conf
+#
+# WAL / replication parameters are passed directly as server args.
+
+# Init-scripts ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: mapreduce
+data:
+  # Create the streaming-replication role.
+  # Uses $REPLICATOR_PASSWORD injected from the Secret so the password is never
+  # hardcoded in plain text in this ConfigMap.
+  01_create_replicator.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    echo "==> Creating replicator role..."
+    psql -v ON_ERROR_STOP=1 \
+         --username "$POSTGRES_USER" \
+         --dbname   "$POSTGRES_DB" \
+         <<-EOSQL
+      DO \$\$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'replicator') THEN
+          CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '${REPLICATOR_PASSWORD}';
+        END IF;
+      END
+      \$\$;
+    EOSQL
+    echo "==> replicator role ready."
+
+  # Allow the replicator to open streaming-replication connections from
+  # any pod in the cluster. This entry is appended to pg_hba.conf and takes
+  # effect immediately (pg_ctl reload is called automatically by the entrypoint
+  # after all init scripts finish).
+  02_configure_hba.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    echo "==> Appending replication auth to pg_hba.conf..."
+    cat >> "$PGDATA/pg_hba.conf" <<EOF
+    # Streaming replication — allow replicator from any cluster pod
+    host    replication     replicator      0.0.0.0/0               scram-sha-256
+    EOF
+    echo "==> pg_hba.conf updated."
+
+---
+# StatefulSet
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -44,6 +100,12 @@ spec:
                 secretKeyRef:
                   name: mapreduce-secrets
                   key: POSTGRES_DB
+            # Inject so the init script can use it without hardcoding.
+            - name: REPLICATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: REPLICATOR_PASSWORD
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
             - name: POSTGRES_HOST_AUTH_METHOD
@@ -51,51 +113,40 @@ spec:
             - name: POSTGRES_INITDB_ARGS
               value: "--auth-host=scram-sha-256 --auth-local=trust"
 
+          # Server parameters — passed as postgres CLI flags so they apply
+          # on every restart without needing a custom postgresql.conf.
           args:
-            - "-c"
-            - "wal_level=replica"
-            - "-c"
-            - "max_wal_senders=3"
-            - "-c"
-            - "max_replication_slots=3"
-            - "-c"
-            - "hot_standby=on"
-            - "-c"
-            - "shared_buffers=128MB"
-            - "-c"
-            - "effective_cache_size=512MB"
-            - "-c"
-            - "work_mem=4MB"
-            - "-c"
-            - "log_min_duration_statement=500"
-            - "-c"
-            - "log_connections=on"
+            - "-c" - "wal_level=replica"
+            - "-c" - "max_wal_senders=5"
+            - "-c" - "max_replication_slots=5"
+            - "-c" - "hot_standby=on"
+            - "-c" - "hot_standby_feedback=on"
+            - "-c" - "wal_keep_size=256"       # keep 256 MB of WAL for slow replicas
+            - "-c" - "shared_buffers=128MB"
+            - "-c" - "effective_cache_size=512MB"
+            - "-c" - "work_mem=4MB"
+            - "-c" - "maintenance_work_mem=64MB"
+            - "-c" - "checkpoint_completion_target=0.9"
+            - "-c" - "log_min_duration_statement=500"
+            - "-c" - "log_connections=on"
+            - "-c" - "log_replication_commands=on"
 
           volumeMounts:
             - name: postgres-data
               mountPath: /var/lib/postgresql/data
-            - name: postgres-config
+            - name: postgres-init
               mountPath: /docker-entrypoint-initdb.d/
 
           readinessProbe:
             exec:
-              command:
-                - pg_isready
-                - -U
-                - mapreduce
-                - -d
-                - mapreduce
+              command: [pg_isready, -U, mapreduce, -d, mapreduce]
             initialDelaySeconds: 10
             periodSeconds: 5
             failureThreshold: 6
+
           livenessProbe:
             exec:
-              command:
-                - pg_isready
-                - -U
-                - mapreduce
-                - -d
-                - mapreduce
+              command: [pg_isready, -U, mapreduce, -d, mapreduce]
             initialDelaySeconds: 30
             periodSeconds: 10
             failureThreshold: 3
@@ -109,9 +160,10 @@ spec:
               cpu: "1"
 
       volumes:
-        - name: postgres-config
+        - name: postgres-init
           configMap:
             name: postgres-init-scripts
+            defaultMode: 0755   # scripts must be executable
 
   volumeClaimTemplates:
     - metadata:
@@ -121,18 +173,14 @@ spec:
         resources:
           requests:
             storage: 5Gi
+
 ---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: postgres-init-scripts
-  namespace: mapreduce
-data:
-  01_replication_user.sql: |
-    CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD 'replicator_dev';
----
-# Headless service — required by StatefulSet serviceName.
-# Stable DNS per pod: postgres-primary-0.postgres-primary.mapreduce.svc.cluster.local
+# Headless Service (required by StatefulSet + app write connections)
+# Stable DNS: postgres-primary-0.postgres-primary.mapreduce.svc.cluster.local
+# Also used by application DSNs:
+#   postgres://...@postgres-primary.mapreduce.svc.cluster.local:5432/...
+# For a single-replica StatefulSet, the headless DNS resolves directly to
+# the pod IP, making a separate ClusterIP service unnecessary.
 apiVersion: v1
 kind: Service
 metadata:
@@ -150,8 +198,10 @@ spec:
     - name: postgres
       port: 5432
       targetPort: 5432
+
 ---
-# NodePort — dev only.
+# NodePort — dev / port-forward access
+# kubectl port-forward svc/postgres-nodeport 5432:5432 -n mapreduce
 apiVersion: v1
 kind: Service
 metadata:

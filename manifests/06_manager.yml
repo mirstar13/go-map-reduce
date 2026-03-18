@@ -1,0 +1,237 @@
+---
+# Manager Service
+#
+# Deployed as a StatefulSet so each replica has a stable identity (manager-0,
+# manager-1 …). The UI service hashes the submitting user's ID to select a
+# specific replica; jobs are therefore consistently owned by one pod.
+#
+# On restart, each replica queries GetActiveJobsByReplica(myReplicaName) to
+# re-attach supervisors to any in-flight jobs it owned before the crash.
+#
+# Ports:
+#   8080  — HTTP API  (internal only — ClusterIP + headless; no NodePort)
+
+# ServiceAccount 
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: manager
+  namespace: mapreduce
+
+---
+# Role; permissions needed to manage worker K8s Jobs 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-worker-role
+  namespace: mapreduce
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+
+---
+# RoleBinding 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manager-worker-rolebinding
+  namespace: mapreduce
+subjects:
+  - kind: ServiceAccount
+    name: manager
+    namespace: mapreduce
+roleRef:
+  kind: Role
+  name: manager-worker-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# StatefulSet 
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: manager
+  namespace: mapreduce
+  labels:
+    app: manager
+spec:
+  serviceName: manager-headless
+  replicas: 2
+  selector:
+    matchLabels:
+      app: manager
+  # OrderedReady — ensure manager-0 is Running before manager-1 starts.
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: manager
+    spec:
+      serviceAccountName: manager
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: manager
+          image: mirstar13/mapreduce-manager:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+
+          env:
+            - name: MANAGER_PORT
+              value: "8080"
+
+            # Stable pod name injected via Downward API — used as owner_replica
+            # in the jobs table for startup recovery.
+            - name: MY_REPLICA_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+
+            # URL the Manager advertises to workers for callbacks.
+            # Points to the ClusterIP service so callbacks are load-balanced
+            # across all healthy replicas (any replica can handle any callback).
+            - name: MANAGER_URL
+              value: "http://manager-api.mapreduce.svc.cluster.local:8080"
+
+            # PostgreSQL
+            - name: POSTGRES_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_DSN
+
+            # MinIO
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_ENDPOINT
+            - name: MINIO_BUCKET_INPUT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_BUCKET_INPUT
+            - name: MINIO_BUCKET_CODE
+              value: "code"
+            - name: MINIO_BUCKET_JOBS
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_BUCKET_JOBS
+            - name: MINIO_BUCKET_OUTPUT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_BUCKET_OUTPUT
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: MINIO_SECRET_KEY
+            - name: MINIO_USE_SSL
+              value: "false"
+
+            # Worker K8s Job settings
+            - name: WORKER_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: WORKER_IMAGE
+            - name: WORKER_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: WORKER_NAMESPACE
+            - name: TASK_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: TASK_TIMEOUT_SECONDS
+            - name: TASK_MAX_RETRIES
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: TASK_MAX_RETRIES
+
+          # Health probes 
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+
+          # Resources 
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+
+---
+# Headless Service (required by StatefulSet) 
+# Provides stable DNS per pod:
+#   manager-0.manager-headless.mapreduce.svc.cluster.local:8080
+#   manager-1.manager-headless.mapreduce.svc.cluster.local:8080
+# Used by the UI service to route job submissions to a specific replica.
+apiVersion: v1
+kind: Service
+metadata:
+  name: manager-headless
+  namespace: mapreduce
+  labels:
+    app: manager
+spec:
+  clusterIP: None
+  selector:
+    app: manager
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+# ClusterIP Service 
+# Load-balanced endpoint for:
+#   - Read operations (list / get jobs) from the UI service
+#   - Worker callbacks (POST /tasks/*/complete|fail)
+# DNS: manager-api.mapreduce.svc.cluster.local:8080
+# This matches MANAGER_API_URL in the ConfigMap.
+apiVersion: v1
+kind: Service
+metadata:
+  name: manager-api
+  namespace: mapreduce
+  labels:
+    app: manager
+spec:
+  selector:
+    app: manager
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
