@@ -13,6 +13,7 @@ require (
 	github.com/sqlc-dev/pqtype v0.3.0
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
+	golang.org/x/term v0.40.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/term v0.40.0
 	k8s.io/api v0.29.0
