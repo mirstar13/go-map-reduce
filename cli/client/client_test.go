@@ -37,6 +37,7 @@ type capturedRequest struct {
 }
 
 func captureServer(t *testing.T, status int, body interface{}) (*httptest.Server, *capturedRequest) {
+	t.Helper()
 	captured := &capturedRequest{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		captured.Method = r.Method
