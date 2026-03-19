@@ -13,6 +13,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/db"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
 	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
+	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
 	"github.com/mirstar13/go-map-reduce/services/manager/splitter"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
@@ -229,7 +230,7 @@ var testCfg = &config.Config{
 	TaskTimeoutSeconds: 300,
 }
 
-func newSupervisor(job db.Job, q db.Querier, spl Splitter, disp Dispatcher) *Supervisor {
+func newSupervisor(job db.Job, q db.Querier, spl interfaces.Splitter, disp interfaces.Dispatcher) *Supervisor {
 	reg := NewRegistry()
 	return New(job, q, spl, disp, testCfg, zap.NewNop(), reg)
 }

@@ -10,7 +10,7 @@ import (
 
 	"github.com/mirstar13/go-map-reduce/db"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
-	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
+	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 )
 
@@ -19,7 +19,7 @@ import (
 // to PENDING (retry count incremented) so the supervisor can re-dispatch them.
 type Watchdog struct {
 	queries  db.Querier
-	disp     *dispatcher.Dispatcher
+	disp     interfaces.Dispatcher
 	registry *supervisor.Registry
 	cfg      *config.Config
 	log      *zap.Logger
@@ -28,7 +28,7 @@ type Watchdog struct {
 // New creates a Watchdog.
 func New(
 	queries db.Querier,
-	disp *dispatcher.Dispatcher,
+	disp interfaces.Dispatcher,
 	registry *supervisor.Registry,
 	cfg *config.Config,
 	log *zap.Logger,

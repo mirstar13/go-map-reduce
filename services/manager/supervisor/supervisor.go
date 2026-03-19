@@ -14,6 +14,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/db"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
 	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
+	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
 )
 
 // Registry keeps track of all running job supervisors on this replica.
@@ -62,8 +63,8 @@ type Supervisor struct {
 	jobID      uuid.UUID
 	job        db.Job
 	queries    db.Querier
-	splitter   Splitter
-	dispatcher Dispatcher
+	splitter   interfaces.Splitter
+	dispatcher interfaces.Dispatcher
 	cfg        *config.Config
 	log        *zap.Logger
 	registry   *Registry
@@ -76,8 +77,8 @@ type Supervisor struct {
 func New(
 	job db.Job,
 	queries db.Querier,
-	spl Splitter,
-	disp Dispatcher,
+	spl interfaces.Splitter,
+	disp interfaces.Dispatcher,
 	cfg *config.Config,
 	log *zap.Logger,
 	registry *Registry,
