@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -969,12 +970,14 @@ func TestRun_RegistersAndDeregistersFromRegistry(t *testing.T) {
 
 func TestRun_NotifyChannel_TriggersStep(t *testing.T) {
 	// A Notify poke must cause step() to run (beyond the initial call).
-	stepCount := 0
+	// Use atomic.Int64 so the Run goroutine (writer) and the test goroutine
+	// (reader) don't race on the counter.
+	var stepCount atomic.Int64
 	job := baseJob("COMPLETED")
 
 	q := &mockQuerier{
 		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) {
-			stepCount++
+			stepCount.Add(1)
 			return job, nil
 		},
 	}
@@ -989,9 +992,9 @@ func TestRun_NotifyChannel_TriggersStep(t *testing.T) {
 		close(done)
 	}()
 
-	// Wait for initial step.
+	// Wait for the initial step to fire.
 	time.Sleep(20 * time.Millisecond)
-	initialCount := stepCount
+	initialCount := stepCount.Load()
 
 	// Trigger an additional step via Notify.
 	reg.Notify(job.JobID)
@@ -1000,5 +1003,5 @@ func TestRun_NotifyChannel_TriggersStep(t *testing.T) {
 	cancel()
 	<-done
 
-	assert.Greater(t, stepCount, initialCount, "Notify must trigger at least one additional step")
+	assert.Greater(t, stepCount.Load(), initialCount, "Notify must trigger at least one additional step")
 }
