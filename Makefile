@@ -7,5 +7,5 @@ minikube-start:
 	kubectl apply -f ./manifests/04_keycloak.yml
 
 test-coverage:
-	go test ./... -coverprofile='coverage.out' || true
-	go tool cover -html='coverage.out'
+	@go test ./... -coverprofile='coverage.out' || true
+	@go tool cover -html='coverage.out'
