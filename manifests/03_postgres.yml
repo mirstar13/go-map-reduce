@@ -116,20 +116,34 @@ spec:
           # Server parameters — passed as postgres CLI flags so they apply
           # on every restart without needing a custom postgresql.conf.
           args:
-            - "-c" - "wal_level=replica"
-            - "-c" - "max_wal_senders=5"
-            - "-c" - "max_replication_slots=5"
-            - "-c" - "hot_standby=on"
-            - "-c" - "hot_standby_feedback=on"
-            - "-c" - "wal_keep_size=256"       # keep 256 MB of WAL for slow replicas
-            - "-c" - "shared_buffers=128MB"
-            - "-c" - "effective_cache_size=512MB"
-            - "-c" - "work_mem=4MB"
-            - "-c" - "maintenance_work_mem=64MB"
-            - "-c" - "checkpoint_completion_target=0.9"
-            - "-c" - "log_min_duration_statement=500"
-            - "-c" - "log_connections=on"
-            - "-c" - "log_replication_commands=on"
+            - "-c"
+            - "wal_level=replica"
+            - "-c"
+            - "max_wal_senders=5"
+            - "-c"
+            - "max_replication_slots=5"
+            - "-c"
+            - "hot_standby=on"
+            - "-c"
+            - "hot_standby_feedback=on"
+            - "-c"
+            - "wal_keep_size=256"       # keep 256 MB of WAL for slow replicas
+            - "-c"
+            - "shared_buffers=128MB"
+            - "-c"
+            - "effective_cache_size=512MB"
+            - "-c"
+            - "work_mem=4MB"
+            - "-c"
+            - "maintenance_work_mem=64MB"
+            - "-c"
+            - "checkpoint_completion_target=0.9"
+            - "-c"
+            - "log_min_duration_statement=500"
+            - "-c"
+            - "log_connections=on"
+            - "-c"
+            - "log_replication_commands=on"
 
           volumeMounts:
             - name: postgres-data
@@ -219,4 +233,205 @@ spec:
     - name: postgres
       port: 5432
       targetPort: 5432
-      nodePort: 30532
+      nodePort: 30532---
+# PostgreSQL Read Replica — Streaming Hot Standby
+#
+# A single hot-standby replica that:
+#   1. Clones the primary via pg_basebackup in an init container.
+#   2. Runs as a hot standby (read-only queries allowed).
+#   3. Applies WAL from the primary continuously via streaming replication.
+#
+# Application services use POSTGRES_DSN_READONLY to spread read load:
+#   postgres://...@postgres-replica.mapreduce.svc.cluster.local:5432/...
+#
+# Deploy AFTER the primary is ready and the replicator role exists:
+#   kubectl rollout status statefulset/postgres-primary -n mapreduce
+#   kubectl apply -f 08_postgres_replica.yml
+#
+# To promote to primary (emergency failover):
+#   kubectl exec postgres-replica-0 -n mapreduce -- \
+#     pg_ctl promote -D /var/lib/postgresql/data/pgdata
+
+# StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-replica
+  namespace: mapreduce
+  labels:
+    app: postgres
+    role: replica
+spec:
+  serviceName: postgres-replica
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+      role: replica
+  template:
+    metadata:
+      labels:
+        app: postgres
+        role: replica
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      initContainers:
+        # pg_basebackup init container
+        # Runs ONCE (or whenever the PVC is empty) to clone the primary.
+        # pg_basebackup -R writes:
+        #   - standby.signal              → postgres starts as standby
+        #   - postgresql.auto.conf        → primary_conninfo for streaming
+        # The main container then starts postgres and finds these files.
+        - name: pg-basebackup
+          image: postgres:16-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+
+              PRIMARY="postgres-primary-0.postgres-primary.mapreduce.svc.cluster.local"
+              PGDATA="/var/lib/postgresql/data/pgdata"
+
+              # If PGDATA already has a PG_VERSION file the replica is already
+              # initialised (e.g. pod restart). Skip pg_basebackup.
+              if [ -f "$PGDATA/PG_VERSION" ]; then
+                echo "==> Data directory already exists, skipping basebackup."
+                exit 0
+              fi
+
+              echo "==> Waiting for primary to accept connections..."
+              until pg_isready -h "$PRIMARY" -U replicator -d postgres 2>/dev/null; do
+                echo "    Primary not ready yet, retrying in 3s..."
+                sleep 3
+              done
+              echo "==> Primary is ready."
+
+              echo "==> Running pg_basebackup..."
+              PGPASSWORD="$REPLICATOR_PASSWORD" pg_basebackup \
+                --host="$PRIMARY"       \
+                --username=replicator   \
+                --pgdata="$PGDATA"      \
+                --wal-method=stream     \
+                --write-recovery-conf   \
+                --progress              \
+                --checkpoint=fast
+
+              # Fix ownership: the main container runs as uid 999 (postgres).
+              chown -R 999:999 "$PGDATA"
+              echo "==> Basebackup complete."
+
+          env:
+            - name: REPLICATOR_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: REPLICATOR_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          volumeMounts:
+            - name: postgres-replica-data
+              mountPath: /var/lib/postgresql/data
+
+          securityContext:
+            runAsUser: 0   # root; needed to chown after pg_basebackup
+
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: POSTGRES_DB
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+          # hot_standby=on allows read-only queries against the standby.
+          args:
+            - "-c"
+            - "hot_standby=on"
+            - "-c"
+            - "hot_standby_feedback=on"
+            - "-c"
+            - "shared_buffers=128MB"
+            - "-c"
+            - "effective_cache_size=512MB"
+            - "-c"
+            - "work_mem=4MB"
+            - "-c"
+            - "log_min_duration_statement=500"
+            - "-c"
+            - "log_connections=on"
+
+          volumeMounts:
+            - name: postgres-replica-data
+              mountPath: /var/lib/postgresql/data
+
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, mapreduce, -d, mapreduce]
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 6
+
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, mapreduce, -d, mapreduce]
+            initialDelaySeconds: 40
+            periodSeconds: 10
+            failureThreshold: 3
+
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-replica-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+# Headless Service (required by StatefulSet)
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replica
+  namespace: mapreduce
+  labels:
+    app: postgres
+    role: replica
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+    role: replica
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

@@ -85,7 +85,7 @@ func main() {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
 	})
 
-	// POST /auth/login — Keycloak direct-grant proxy; no JWT needed.
+	// POST /auth/login
 	app.Post("/auth/login", authHandler.Login)
 
 	api := app.Group("", jwtMiddleware)

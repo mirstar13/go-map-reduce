@@ -23,7 +23,7 @@ data:
   MINIO_BUCKET_OUTPUT: "output"
   MINIO_BUCKET_CODE:   "code"
 
-  # Manager Service 
+  # Manager Service
   MANAGER_API_URL:        "http://manager-api.mapreduce.svc.cluster.local:8080"
   MANAGER_REPLICAS:       "2"
   WORKER_NAMESPACE:       "mapreduce"
@@ -31,7 +31,7 @@ data:
   TASK_TIMEOUT_SECONDS:   "300"
   TASK_MAX_RETRIES:       "3"
 
-  #  Auth / UI Service 
+  #  Auth / UI Service
   AUTH_SERVICE_URL: "http://auth-api.mapreduce.svc.cluster.local:8082"
 
   # Keycloak

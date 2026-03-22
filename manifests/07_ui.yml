@@ -1,5 +1,5 @@
 ---
-# Deployment 
+# Deployment
 # The UI service is stateless and can be safely replicated behind the Service.
 # It validates JWTs locally (via Keycloak JWKS), forwards job submissions to
 # the Manager StatefulSet, and proxies admin operations to Keycloak.
@@ -37,13 +37,13 @@ spec:
 
       containers:
         - name: ui-service
-          image: mirstar13/mapreduce-ui:latest
+          image: starpal/mapreduce-ui-service:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8081
               name: http
 
-          # Environment — ConfigMap 
+          # Environment — ConfigMap
           env:
             - name: UI_PORT
               value: "8081"
@@ -102,7 +102,7 @@ spec:
             - name: MINIO_USE_SSL
               value: "false"
 
-            # Environment — Secrets 
+            # Environment — Secrets
             - name: MINIO_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -124,7 +124,7 @@ spec:
                   name: mapreduce-secrets
                   key: KEYCLOAK_ADMIN_PASSWORD
 
-          # Health probes 
+          # Health probes
           livenessProbe:
             httpGet:
               path: /healthz
@@ -141,7 +141,7 @@ spec:
             periodSeconds: 10
             failureThreshold: 3
 
-          # Resource limits 
+          # Resource limits
           resources:
             requests:
               cpu: "100m"
@@ -151,7 +151,7 @@ spec:
               memory: "256Mi"
 
 ---
-# ClusterIP Service (internal access) 
+# ClusterIP Service (internal access)
 apiVersion: v1
 kind: Service
 metadata:
@@ -168,22 +168,22 @@ spec:
       targetPort: 8081
 
 ---
-# NodePort Service (external / minikube access) 
+# NodePort Service (external / minikube access)
 # Use: minikube service ui-nodeport -n mapreduce
 # Or:  kubectl port-forward svc/ui-nodeport 8081:8081 -n mapreduce
-apiVersion: v1
-kind: Service
-metadata:
-  name: ui-nodeport
-  namespace: mapreduce
-  labels:
-    app: ui-service
-spec:
-  type: NodePort
-  selector:
-    app: ui-service
-  ports:
-    - name: http
-      port: 8081
-      targetPort: 8081
-      nodePort: 30081   # CLI default: http://<minikube-ip>:30081
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: ui-nodeport
+#   namespace: mapreduce
+#   labels:
+#     app: ui-service
+# spec:
+#   type: NodePort
+#   selector:
+#     app: ui-service
+#   ports:
+#     - name: http
+#       port: 8081
+#       targetPort: 8081
+#       nodePort: 30081

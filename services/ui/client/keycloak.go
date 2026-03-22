@@ -53,7 +53,6 @@ func (k *KeycloakClient) Login(ctx context.Context, username, password string) (
 		"client_id":  {k.cfg.KeycloakClientID},
 		"username":   {username},
 		"password":   {password},
-		"scope":      {"openid profile email roles"},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
