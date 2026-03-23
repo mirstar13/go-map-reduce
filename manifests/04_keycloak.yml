@@ -106,8 +106,6 @@ spec:
             - name: realm-import
               mountPath: /opt/keycloak/data/import
               readOnly: true
-          # In start-dev mode Keycloak does NOT open the management port (9000).
-          # Health endpoints are served on the main HTTP port (8080) instead.
           startupProbe:
             httpGet:
               path: /health/started
@@ -259,7 +257,20 @@ data:
           "redirectUris": ["*"],
           "webOrigins": ["*"],
           "defaultClientScopes": ["openid", "profile", "email", "roles"],
-          "optionalClientScopes": []
+          "optionalClientScopes": [],
+          "protocolMappers": [
+            {
+              "name": "sub",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-sub-mapper",
+              "consentRequired": false,
+              "config": {
+                "access.token.claim": "true",
+                "id.token.claim": "true",
+                "userinfo.token.claim": "true"
+              }
+            }
+          ]
         }
       ],
 

@@ -166,24 +166,3 @@ spec:
     - name: http
       port: 8081
       targetPort: 8081
-
----
-# NodePort Service (external / minikube access)
-# Use: minikube service ui-nodeport -n mapreduce
-# Or:  kubectl port-forward svc/ui-nodeport 8081:8081 -n mapreduce
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: ui-nodeport
-#   namespace: mapreduce
-#   labels:
-#     app: ui-service
-# spec:
-#   type: NodePort
-#   selector:
-#     app: ui-service
-#   ports:
-#     - name: http
-#       port: 8081
-#       targetPort: 8081
-#       nodePort: 30081
