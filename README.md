@@ -14,22 +14,22 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 ## Architecture
 
 ```
-┌─────────────┐     ┌─────────────────┐     ┌──────────────────┐
-│   CLI       │────▶│   UI Service    │────▶│  Manager Service │
-│  (mapreduce)│     │   (Gateway)     │     │  (Orchestrator)  │
-└─────────────┘     └─────────────────┘     └──────────────────┘
-                            │                        │
-                            ▼                        ▼
-                    ┌───────────────┐       ┌───────────────┐
-                    │   Keycloak    │       │  Worker Pods  │
-                    │   (Auth)      │       │  (K8s Jobs)   │
-                    └───────────────┘       └───────────────┘
-                            │                        │
-                            ▼                        ▼
-                    ┌───────────────┐       ┌───────────────┐
-                    │  PostgreSQL   │◀─────▶│     MinIO     │
-                    │  (State DB)   │       │   (Storage)   │
-                    └───────────────┘       └───────────────┘
+┌─────────────┐      ┌─────────────────┐       ┌──────────────────┐
+│   CLI       │────▶│   UI Service    │─────▶│  Manager Service │
+│  (mapreduce)│      │   (Gateway)     │       │  (Orchestrator)  │
+└─────────────┘      └─────────────────┘       └──────────────────┘
+                            │                          │
+                            ▼                          ▼
+                     ┌───────────────┐         ┌───────────────┐
+                     │   Keycloak    │         │  Worker Pods  │
+                     │   (Auth)      │         │  (K8s Jobs)   │
+                     └───────────────┘         └───────────────┘
+                            │                          │
+                            ▼                          ▼
+                     ┌───────────────┐         ┌───────────────┐
+                     │  PostgreSQL   │◀─────▶│     MinIO     │
+                     │  (State DB)   │         │   (Storage)   │
+                     └───────────────┘         └───────────────┘
 ```
 
 ### Services
