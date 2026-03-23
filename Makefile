@@ -1,6 +1,8 @@
 minikube-start:
 	minikube start --cpus=4 --memory=6144 --disk-size=20g --driver=docker
 	kubectl apply -f ./manifests/
+	minikube addons enable ingress
+	minikube addons enable ingress-dns
 
 test-coverage:
 	@go test ./... -coverprofile='coverage.out' || true
