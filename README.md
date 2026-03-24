@@ -2,6 +2,15 @@
 
 A distributed MapReduce implementation built in Go, designed to run on Kubernetes. This project implements a scalable, fault-tolerant parallel computation framework following the architecture described in [Dean & Ghemawat's MapReduce paper](https://www.usenix.org/legacy/publications/library/proceedings/osdi04/tech/full_papers/dean/dean.pdf).
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Design Document (PDF)](docs/design-document.pdf) | System design, technology choices, UML diagrams |
+| [Architecture & UML](docs/architecture.md) | Detailed architecture, sequence diagrams, state machines |
+| [Word Count Example](examples/wordcount/) | Classic MapReduce word frequency counter |
+| [Inverted Index Example](examples/inverted-index/) | Build word-to-document index |
+
 ## Features
 
 - **Distributed Execution**: Scale to thousands of parallel workers via Kubernetes Jobs
@@ -10,6 +19,7 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 - **Flexible Input/Output**: JSON Lines and plain text formats with byte-range splitting
 - **Object Storage**: MinIO-based storage for input, code, intermediate, and output files
 - **CLI & API**: Command-line interface and REST API for job management
+- **Go Plugins**: Type-safe mapper/reducer execution via HashiCorp go-plugin
 
 ## Architecture
 
