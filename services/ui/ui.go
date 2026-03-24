@@ -85,7 +85,7 @@ func main() {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
 	})
 
-	// POST /auth/login — Keycloak direct-grant proxy; no JWT needed.
+	// POST /auth/login
 	app.Post("/auth/login", authHandler.Login)
 
 	api := app.Group("", jwtMiddleware)
@@ -95,7 +95,7 @@ func main() {
 	jobs.Get("/", jobHandler.ListJobs)
 	jobs.Post("/", jobHandler.SubmitJob)
 	jobs.Get("/:id", jobHandler.GetJob)
-	jobs.Delete("/:id", jobHandler.CancelJob)
+	jobs.Post("/:id/cancel", jobHandler.CancelJob)
 	jobs.Get("/:id/output", jobHandler.GetJobOutput)
 
 	// File uploads (accessible by any authenticated user).

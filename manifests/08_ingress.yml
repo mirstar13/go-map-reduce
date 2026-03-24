@@ -1,0 +1,56 @@
+# ─────────────────────────────────────────────
+# Ingress — UI Service
+#
+# Routes: http://ui.mapreduce.local  →  ui-api:8081
+#
+# proxy-body-size: "100m"
+#   The CLI uploads input data files and mapper/reducer scripts through
+#   this service. The default nginx body limit is 1MB which would reject
+#   any moderately-sized dataset. 100MB gives comfortable headroom.
+#
+# proxy-read-timeout / proxy-send-timeout: "600"
+#   Job submissions can take time to process — the manager does input
+#   splitting synchronously before responding. 10-minute timeout prevents
+#   nginx killing the connection mid-operation.
+# ─────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ui-ingress
+  namespace: mapreduce
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: ui.mapreduce.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ui-api
+                port:
+                  number: 8081
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-ingress
+  namespace: mapreduce
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: keycloak.mapreduce.nip.io
+      http:
+        paths:
+            - path: /
+              pathType: Prefix
+              backend:
+                service:
+                  name: keycloak
+                  port:
+                    number: 8080

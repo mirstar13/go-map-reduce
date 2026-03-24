@@ -7,11 +7,9 @@ PLATFORMS := linux/amd64
 
 minikube-start:
 	minikube start --cpus=4 --memory=6144 --disk-size=20g --driver=docker
-	kubectl apply -f ./manifests/00_namespace.yml
-	kubectl apply -f ./manifests/01_secrets.yml
-	kubectl apply -f ./manifests/02_configmap.yml
-	kubectl apply -f ./manifests/03_postgres.yml
-	kubectl apply -f ./manifests/04_keycloak.yml
+	kubectl apply -f ./manifests/
+	minikube addons enable ingress
+	minikube addons enable ingress-dns
 
 minikube-start-prod:
 	minikube start --cpus=4 --memory=6144 --disk-size=20g --driver=docker
@@ -22,10 +20,6 @@ minikube-start-prod:
 	kubectl apply -f ./prodmanifests/
 
 test-coverage:
-<<<<<<< Updated upstream
-	go test ./... -coverprofile='coverage.out' || true
-	go tool cover -html='coverage.out'
-=======
 	@go test ./... -coverprofile='coverage.out' || true
 	@go tool cover -html='coverage.out'
 
@@ -52,4 +46,12 @@ docker-build-push: buildx-setup
 	@docker buildx build --platform $(PLATFORMS) --push -f ./services/ui/devDockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service .
 	@docker buildx build --platform $(PLATFORMS) --push -f ./services/worker/devDockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker .
 	@docker buildx build --platform $(PLATFORMS) --push -f ./services/builder/devDockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder .
->>>>>>> Stashed changes
+=======
+	@go test ./... -coverprofile='coverage.out' || true
+	@go tool cover -html='coverage.out'
+
+docker-build:
+	@docker build -f ./cmd/cli/devDockerfile -t starpal/mapreduce-cli .
+	@docker build -f ./cmd/migrate/devDockerfile -t starpal/mapreduce-migrate .
+	@docker build -f ./services/manager/devDockerfile -t starpal/mapreduce-manager-service .
+	@docker build -f ./services/ui/devDockerfile -t starpal/mapreduce-ui-service .

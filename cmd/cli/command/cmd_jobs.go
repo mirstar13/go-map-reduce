@@ -201,7 +201,7 @@ var jobsCancelCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		c := newClient()
 		var resp map[string]interface{}
-		if err := c.Delete("/jobs/"+args[0], &resp); err != nil {
+		if err := c.Post("/jobs/"+args[0]+"/cancel", nil, &resp); err != nil {
 			return err
 		}
 		fmt.Printf("Job %s cancelled.\n", args[0])

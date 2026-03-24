@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/mirstar13/go-map-reduce/cli/config"
+	"github.com/mirstar13/go-map-reduce/cmd/cli/config"
 )
 
 var loginCmd = &cobra.Command{

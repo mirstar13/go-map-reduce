@@ -41,7 +41,7 @@ func (e *APIError) Error() string {
 }
 
 // Get performs an authenticated GET and decodes the JSON response into v.
-func (c *Client) Get(path string, v interface{}) error {
+func (c *Client) Get(path string, v any) error {
 	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -50,7 +50,7 @@ func (c *Client) Get(path string, v interface{}) error {
 }
 
 // Post performs an authenticated POST with a JSON body and decodes the response.
-func (c *Client) Post(path string, body interface{}, v interface{}) error {
+func (c *Client) Post(path string, body any, v any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal body: %w", err)
@@ -64,7 +64,7 @@ func (c *Client) Post(path string, body interface{}, v interface{}) error {
 }
 
 // PostRaw performs an authenticated POST with a JSON body and returns raw bytes.
-func (c *Client) PostRaw(path string, body interface{}) ([]byte, int, error) {
+func (c *Client) PostRaw(path string, body any) ([]byte, int, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal body: %w", err)
@@ -78,7 +78,7 @@ func (c *Client) PostRaw(path string, body interface{}) ([]byte, int, error) {
 }
 
 // Delete performs an authenticated DELETE.
-func (c *Client) Delete(path string, v interface{}) error {
+func (c *Client) Delete(path string, v any) error {
 	req, err := http.NewRequest(http.MethodDelete, c.baseURL+path, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -88,7 +88,7 @@ func (c *Client) Delete(path string, v interface{}) error {
 
 // UploadFile performs a multipart POST to upload a file from disk.
 // Returns the JSON response decoded into v.
-func (c *Client) UploadFile(path, localPath string, v interface{}) error {
+func (c *Client) UploadFile(path, localPath string, v any) error {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", localPath, err)
@@ -115,8 +115,8 @@ func (c *Client) UploadFile(path, localPath string, v interface{}) error {
 	return c.do(req, v)
 }
 
-// PostNoAuth performs an unauthenticated POST — used only for login.
-func (c *Client) PostNoAuth(path string, body interface{}, v interface{}) error {
+// PostNoAuth performs an unauthenticated POST
+func (c *Client) PostNoAuth(path string, body any, v any) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal body: %w", err)
@@ -136,7 +136,7 @@ func (c *Client) PostNoAuth(path string, body interface{}, v interface{}) error 
 }
 
 // do attaches the bearer token and executes the request.
-func (c *Client) do(req *http.Request, v interface{}) error {
+func (c *Client) do(req *http.Request, v any) error {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -178,7 +178,7 @@ func (c *Client) doRaw(req *http.Request) ([]byte, int, error) {
 
 // decodeResponse reads the body and unmarshals it into v (if non-nil).
 // Returns an APIError for non-2xx responses.
-func (c *Client) decodeResponse(resp *http.Response, v interface{}) error {
+func (c *Client) decodeResponse(resp *http.Response, v any) error {
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)

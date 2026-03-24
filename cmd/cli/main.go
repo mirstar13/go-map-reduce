@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mirstar13/go-map-reduce/cli/command"
+	"github.com/mirstar13/go-map-reduce/cmd/cli/command"
 )
 
 func main() {

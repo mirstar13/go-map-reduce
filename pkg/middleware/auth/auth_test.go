@@ -102,13 +102,14 @@ func (f *testFixture) signToken(t *testing.T, opts ...tokenOpt) string {
 		opt(&o)
 	}
 
+	// Build keycloakClaims with explicit top-level fields (no embedded RegisteredClaims).
+	// This matches the production struct and ensures "sub" is serialised at the top
+	// level of the JWT payload — exactly as Keycloak issues it.
 	claims := keycloakClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   o.subject,
-			Issuer:    o.issuer,
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ExpiresAt: jwt.NewNumericDate(o.expiry),
-		},
+		Issuer:            o.issuer,
+		Subject:           o.subject, // → "sub" key in JWT payload
+		ExpiresAt:         jwt.NewNumericDate(o.expiry),
+		IssuedAt:          jwt.NewNumericDate(time.Now()),
 		Email:             o.email,
 		PreferredUsername: o.username,
 		AuthorizedParty:   o.azp,
@@ -239,7 +240,6 @@ func TestIdentityFromContext(t *testing.T) {
 
 	app.Get("/", func(c fiber.Ctx) error {
 		SetIdentity(c, want)
-		// IdentityFromContext accepts any; pass the fiber.Ctx directly.
 		got := IdentityFromContext(c)
 		assert.Equal(t, want, got)
 		return c.SendStatus(fiber.StatusOK)
@@ -427,13 +427,12 @@ func TestNew_TokenSignedWithDifferentKey(t *testing.T) {
 	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
+	// Build claims with explicit fields (no embedded RegisteredClaims).
 	claims := keycloakClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "attacker",
-			Issuer:    f.issuer(),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
+		Subject:         "attacker",
+		Issuer:          f.issuer(),
+		IssuedAt:        jwt.NewNumericDate(time.Now()),
+		ExpiresAt:       jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		AuthorizedParty: testClientID,
 	}
 	claims.RealmAccess.Roles = []string{"admin"}
@@ -469,13 +468,12 @@ func TestNew_EmailFallsBackToPreferredUsername(t *testing.T) {
 		return c.JSON(fiber.Map{"email": MustGetIdentity(c).Email})
 	})
 
+	// Build a token with no email but a preferred_username set.
 	claims := keycloakClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   "sub-1",
-			Issuer:    f.issuer(),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
-		},
+		Subject:           "sub-1",
+		Issuer:            f.issuer(),
+		IssuedAt:          jwt.NewNumericDate(time.Now()),
+		ExpiresAt:         jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		Email:             "",
 		PreferredUsername: "fallback-username",
 		AuthorizedParty:   testClientID,
@@ -507,6 +505,22 @@ func TestNew_SkipsWhenNextReturnsTrue(t *testing.T) {
 
 	resp := fiberTest(t, app, http.MethodGet, "/public", "")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestNew_EmptySubjectRejected verifies the defensive guard: a token that is
+// otherwise valid but has an empty "sub" claim is rejected with 401.
+func TestNew_EmptySubjectRejected(t *testing.T) {
+	f := newFixture(t)
+	app := setupApp(t, f)
+
+	// Craft a token with an explicitly empty Subject.
+	token := f.signToken(t, withSubject(""))
+	resp := fiberTest(t, app, http.MethodGet, "/protected", "Bearer "+token)
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	body := bodyJSON(t, resp)
+	errMsg, _ := body["error"].(string)
+	assert.Contains(t, errMsg, "sub")
 }
 
 func setupInternalApp(t *testing.T) *fiber.App {

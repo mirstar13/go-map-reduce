@@ -139,6 +139,14 @@ func parseAndVerify(rawToken string, cache *jwks.Cache, expectedIssuer string, e
 		return nil, fmt.Errorf("token azp %q does not match client %q", claims.AuthorizedParty, expectedClientID)
 	}
 
+	// Defensive: the sub claim must be present. An empty Subject means the token
+	// is malformed or the JWT parser failed to extract the claim — either way we
+	// must not allow the request through, because every downstream service relies
+	// on X-User-Sub being non-empty to identify the caller.
+	if claims.Subject == "" {
+		return nil, fmt.Errorf("token is missing the 'sub' (subject) claim")
+	}
+
 	return claims, nil
 }
 
@@ -151,7 +159,7 @@ func claimsToIdentity(c *keycloakClaims) *Identity {
 	}
 
 	return &Identity{
-		Subject: c.Subject,
+		Subject: c.Subject, // directly from the top-level "sub" field — never empty
 		Email:   email,
 		Roles:   filterRoles(c.RealmAccess.Roles),
 	}

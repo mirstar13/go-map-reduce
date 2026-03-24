@@ -78,7 +78,7 @@ spec:
 
       containers:
         - name: manager
-          image: mirstar13/mapreduce-manager:latest
+          image: starpal/mapreduce-manager-service:latest
           imagePullPolicy: Always
           ports:
             - name: http

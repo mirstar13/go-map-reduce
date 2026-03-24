@@ -22,7 +22,7 @@ metadata:
   labels:
     app: keycloak
 spec:
-  serviceName: keycloak
+  serviceName: keycloak-discovery
   replicas: 1
   selector:
     matchLabels:
@@ -39,13 +39,15 @@ spec:
           # Pin to a specific version for reproducible builds.
           image: quay.io/keycloak/keycloak:26.1.4
           args:
-            - start-dev           # dev mode: embedded H2 we override to Postgres below
+            - start-dev
             - --import-realm      # auto-import realm JSON on first boot
-
           ports:
             - name: http
               containerPort: 8080
-
+            - name: jgroups
+              containerPort: 7800
+            - name: jgroups-fd
+              containerPort: 57800
           env:
             # Bootstrap admin credentials (first-run only)
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
@@ -66,7 +68,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: mapreduce-secrets
-                  key: POSTGRES_DSN
+                  key: KEYCLOAK_POSTGRES_DSN
             - name: KC_DB_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -78,37 +80,53 @@ spec:
                   name: mapreduce-secrets
                   key: POSTGRES_PASSWORD
 
-            # Hostname
-            - name: KC_HOSTNAME
-              value: "keycloak.mapreduce.svc.cluster.local"
-            - name: KC_HOSTNAME_STRICT
-              value: "false"        # allow any host in dev mode
-            - name: KC_HTTP_ENABLED
+            # KC_HOSTNAME* vars are intentionally omitted.
+            # start-dev disables hostname enforcement — setting them causes
+            # Keycloak 26 to fail to start with "not a valid URL" errors.
+
+            # Enable the management interface on port 9000 (health/metrics)
+            - name: KC_HEALTH_ENABLED
               value: "true"
 
             # Logging
             - name: KC_LOG_LEVEL
               value: "INFO"
 
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: KC_CACHE_EMBEDDED_NETWORK_BIND_ADDRESS
+              value: '$(POD_IP)'
+
+            - name: KC_CACHE
+              value: "local"
+
           volumeMounts:
             - name: realm-import
               mountPath: /opt/keycloak/data/import
               readOnly: true
-
-          readinessProbe:
+          startupProbe:
             httpGet:
-              path: /realms/mapreduce
-              port: 8080
-            initialDelaySeconds: 30
+              path: /health/started
+              port: 9000
             periodSeconds: 10
-            failureThreshold: 10
+            failureThreshold: 30   # up to 5 min for slow first-boot builds
 
           livenessProbe:
             httpGet:
               path: /health/live
-              port: 8080
-            initialDelaySeconds: 60
-            periodSeconds: 20
+              port: 9000
+            initialDelaySeconds: 90
+            periodSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 9000
+            initialDelaySeconds: 30
+            periodSeconds: 10
             failureThreshold: 3
 
           resources:
@@ -127,7 +145,6 @@ spec:
             name: keycloak-realm-import
 
 ---
-# ClusterIP service
 apiVersion: v1
 kind: Service
 metadata:
@@ -140,28 +157,23 @@ spec:
     app: keycloak
   ports:
     - name: http
+      protocol: TCP
       port: 8080
-      targetPort: 8080
-
+      targetPort: http
+  type: ClusterIP
 ---
-# NodePort service (dev / port-forward access)
 apiVersion: v1
 kind: Service
 metadata:
-  name: keycloak-nodeport
+  name: keycloak-discovery
   namespace: mapreduce
   labels:
     app: keycloak
 spec:
-  type: NodePort
   selector:
     app: keycloak
-  ports:
-    - name: http
-      port: 8080
-      targetPort: 8080
-      nodePort: 30808   # access via: minikube service keycloak-nodeport -n mapreduce
-
+  clusterIP: None
+  type: ClusterIP
 ---
 # ============================================================
 # Realm Bootstrap ConfigMap
@@ -196,6 +208,36 @@ data:
       "accessTokenLifespan": 86400,
       "ssoSessionMaxLifespan": 86400,
 
+      "requiredActions": [
+        {
+          "alias": "VERIFY_PROFILE",
+          "name": "Verify Profile",
+          "providerId": "VERIFY_PROFILE",
+          "enabled": false,
+          "defaultAction": false,
+          "priority": 90,
+          "config": {}
+        },
+        {
+          "alias": "UPDATE_PASSWORD",
+          "name": "Update Password",
+          "providerId": "UPDATE_PASSWORD",
+          "enabled": true,
+          "defaultAction": false,
+          "priority": 30,
+          "config": {}
+        },
+        {
+          "alias": "VERIFY_EMAIL",
+          "name": "Verify Email",
+          "providerId": "VERIFY_EMAIL",
+          "enabled": true,
+          "defaultAction": false,
+          "priority": 50,
+          "config": {}
+        }
+      ],
+
       "roles": {
         "realm": [
           { "name": "user",  "description": "Regular user; can submit and view own jobs" },
@@ -215,28 +257,17 @@ data:
           "redirectUris": ["*"],
           "webOrigins": ["*"],
           "defaultClientScopes": ["openid", "profile", "email", "roles"],
-          "optionalClientScopes": []
-        }
-      ],
-
-      "clientScopes": [
-        {
-          "name": "roles",
-          "protocol": "openid-connect",
-          "attributes": { "include.in.token.scope": "true" },
+          "optionalClientScopes": [],
           "protocolMappers": [
             {
-              "name": "realm roles mapper",
+              "name": "sub",
               "protocol": "openid-connect",
-              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "protocolMapper": "oidc-sub-mapper",
               "consentRequired": false,
               "config": {
-                "multivalued": "true",
-                "userinfo.token.claim": "true",
-                "id.token.claim": "true",
                 "access.token.claim": "true",
-                "claim.name": "realm_access.roles",
-                "jsonType.label": "String"
+                "id.token.claim": "true",
+                "userinfo.token.claim": "true"
               }
             }
           ]
@@ -249,20 +280,28 @@ data:
           "email": "admin@mapreduce.local",
           "enabled": true,
           "emailVerified": true,
+          "requiredActions": [],
           "credentials": [
             { "type": "password", "value": "admin", "temporary": false }
           ],
-          "realmRoles": ["admin", "user"]
+          "realmRoles": ["admin", "user"],
+          "clientRoles": {
+            "account": ["manage-account", "view-profile", "manage-account-links"]
+          }
         },
         {
           "username": "alice",
           "email": "alice@mapreduce.local",
           "enabled": true,
           "emailVerified": true,
+          "requiredActions": [],
           "credentials": [
             { "type": "password", "value": "alice", "temporary": false }
           ],
-          "realmRoles": ["user"]
+          "realmRoles": ["user"],
+          "clientRoles": {
+            "account": ["manage-account", "view-profile", "manage-account-links"]
+          }
         }
       ]
     }

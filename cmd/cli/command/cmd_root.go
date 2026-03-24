@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	cliclient "github.com/mirstar13/go-map-reduce/cli/client"
-	"github.com/mirstar13/go-map-reduce/cli/config"
+	cliclient "github.com/mirstar13/go-map-reduce/cmd/cli/client"
+	"github.com/mirstar13/go-map-reduce/cmd/cli/config"
 )
 
 // Global flags set on the root command and inherited by all subcommands.
