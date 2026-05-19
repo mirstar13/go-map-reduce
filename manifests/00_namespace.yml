@@ -28,7 +28,10 @@ spec:
       app: ui-service
   ingress:
     - from:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
             matchLabels:
               app.kubernetes.io/component: controller
               app.kubernetes.io/instance: ingress-nginx
@@ -36,7 +39,7 @@ spec:
         - protocol: TCP
           port: 8081
 ---
-# Allow UI to talk to Manager, Keycloak, MinIO
+# Allow UI to talk to Manager, Keycloak, MinIO, and DNS
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -59,3 +62,190 @@ spec:
         - podSelector:
             matchLabels:
               app: minio
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Manager Service: Allow ingress from UI and Workers
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-manager-ingress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: manager
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui-service
+        - podSelector:
+            matchLabels:
+              app: mapreduce-worker
+        - podSelector:
+            matchLabels:
+              app: mapreduce-builder
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Manager Service: Allow egress to Postgres, MinIO, K8s API, and DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-manager-egress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: manager
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+      ports:
+        - protocol: TCP
+          port: 9000
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Postgres: Allow ingress from Manager and Keycloak
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-ingress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: manager
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# MinIO: Allow ingress from UI, Manager, and Workers
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-minio-ingress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: minio
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui-service
+        - podSelector:
+            matchLabels:
+              app: manager
+        - podSelector:
+            matchLabels:
+              app: mapreduce-worker
+        - podSelector:
+            matchLabels:
+              app: mapreduce-builder
+      ports:
+        - protocol: TCP
+          port: 9000
+---
+# Keycloak: Allow ingress from UI and Manager
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-keycloak-ingress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ui-service
+        - podSelector:
+            matchLabels:
+              app: manager
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Workers: Allow egress to Manager, MinIO, and DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-worker-egress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: In
+        values: [mapreduce-worker, mapreduce-builder]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: manager
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
