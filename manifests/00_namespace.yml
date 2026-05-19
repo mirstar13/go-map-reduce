@@ -126,8 +126,15 @@ spec:
         - protocol: TCP
           port: 9000
     - to:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
         - ipBlock:
-            cidr: 10.96.0.1/32
+            cidr: 10.96.0.1/32 # Internal Kubernetes API service
       ports:
         - protocol: TCP
           port: 443
@@ -144,7 +151,7 @@ spec:
         - protocol: TCP
           port: 53
 ---
-# Postgres: Allow ingress from Manager and Keycloak
+# Postgres: Allow ingress from Manager, Keycloak, and db-migrate
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -162,6 +169,9 @@ spec:
         - podSelector:
             matchLabels:
               app: keycloak
+        - podSelector:
+            matchLabels:
+              app: db-migrate
       ports:
         - protocol: TCP
           port: 5432
@@ -194,7 +204,7 @@ spec:
         - protocol: TCP
           port: 9000
 ---
-# Keycloak: Allow ingress from UI and Manager
+# Keycloak: Allow ingress from Ingress Controller, UI, and Manager
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -206,6 +216,13 @@ spec:
       app: keycloak
   ingress:
     - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: controller
+              app.kubernetes.io/instance: ingress-nginx
         - podSelector:
             matchLabels:
               app: ui-service
@@ -215,6 +232,68 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+---
+# Keycloak: Allow egress to Postgres and DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-keycloak-egress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# db-migrate: Allow egress to Postgres and DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-db-migrate-egress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: db-migrate
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
 ---
 # Workers: Allow egress to Manager, MinIO, and DNS
 apiVersion: networking.k8s.io/v1
@@ -237,6 +316,39 @@ spec:
         - podSelector:
             matchLabels:
               app: minio
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Postgres: Allow egress to other Postgres pods (for replication) and DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-egress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
     - to:
         - namespaceSelector:
             matchLabels:
