@@ -20,17 +20,17 @@ metadata:
   name: keycloak
   namespace: mapreduce
   labels:
-    app: keycloak
+    app.kubernetes.io/name: keycloak
 spec:
   serviceName: keycloak-discovery
   replicas: 1
   selector:
     matchLabels:
-      app: keycloak
+      app.kubernetes.io/name: keycloak
   template:
     metadata:
       labels:
-        app: keycloak
+        app.kubernetes.io/name: keycloak
     spec:
       terminationGracePeriodSeconds: 60
       securityContext:
@@ -161,10 +161,10 @@ metadata:
   name: keycloak
   namespace: mapreduce
   labels:
-    app: keycloak
+    app.kubernetes.io/name: keycloak
 spec:
   selector:
-    app: keycloak
+    app.kubernetes.io/name: keycloak
   ports:
     - name: http
       protocol: TCP
@@ -178,10 +178,10 @@ metadata:
   name: keycloak-discovery
   namespace: mapreduce
   labels:
-    app: keycloak
+    app.kubernetes.io/name: keycloak
 spec:
   selector:
-    app: keycloak
+    app.kubernetes.io/name: keycloak
   clusterIP: None
   type: ClusterIP
 ---

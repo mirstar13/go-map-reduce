@@ -57,7 +57,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: keycloak
+              app.kubernetes.io/name: keycloak
     - to:
         - podSelector:
             matchLabels:
@@ -128,7 +128,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: keycloak
+              app.kubernetes.io/name: keycloak
       ports:
         - protocol: TCP
           port: 8080
@@ -168,7 +168,7 @@ spec:
               app: manager
         - podSelector:
             matchLabels:
-              app: keycloak
+              app.kubernetes.io/name: keycloak
         - podSelector:
             matchLabels:
               app: db-migrate
@@ -216,7 +216,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: keycloak
+      app.kubernetes.io/name: keycloak
   ingress:
     - from:
         - namespaceSelector:
@@ -245,7 +245,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: keycloak
+      app.kubernetes.io/name: keycloak
   egress:
     - to:
         - podSelector:
