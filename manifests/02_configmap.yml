@@ -27,7 +27,8 @@ data:
   MANAGER_API_URL:        "http://manager-api.mapreduce.svc.cluster.local:8080"
   MANAGER_REPLICAS:       "2"
   WORKER_NAMESPACE:       "mapreduce"
-  WORKER_IMAGE:           "mirstar13/mapreduce-worker:latest"
+  WORKER_IMAGE:           "starpal/mapreduce-worker:latest"
+  BUILDER_IMAGE:          "starpal/mapreduce-builder:latest"
   TASK_TIMEOUT_SECONDS:   "300"
   TASK_MAX_RETRIES:       "3"
 

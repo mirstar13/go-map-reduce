@@ -18,10 +18,12 @@ kind: Ingress
 metadata:
   name: ui-ingress
   namespace: mapreduce
+  labels:
+    app.kubernetes.io/name: ui-service
   annotations:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
-    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10g"
 spec:
   ingressClassName: nginx
   rules:
@@ -41,6 +43,8 @@ kind: Ingress
 metadata:
   name: keycloak-ingress
   namespace: mapreduce
+  labels:
+    app.kubernetes.io/name: keycloak
 spec:
   ingressClassName: nginx
   rules:

@@ -304,6 +304,7 @@ spec:
         # The main container then starts postgres and finds these files.
         - name: pg-basebackup
           image: postgres:16-alpine
+          imagePullPolicy: Always
           command:
             - /bin/sh
             - -c
@@ -356,6 +357,13 @@ spec:
             capabilities:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
 
       containers:
         - name: postgres
