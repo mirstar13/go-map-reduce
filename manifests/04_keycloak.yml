@@ -33,11 +33,21 @@ spec:
         app: keycloak
     spec:
       terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
 
       containers:
         - name: keycloak
           # Pin to a specific version for reproducible builds.
           image: quay.io/keycloak/keycloak:26.1.4
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false # Keycloak 26 requires write access to some internal paths
           args:
             - start-dev
             - --import-realm      # auto-import realm JSON on first boot
@@ -131,8 +141,8 @@ spec:
 
           resources:
             requests:
-              memory: "512Mi"
-              cpu: "250m"
+              memory: "1Gi"
+              cpu: "1"
             limits:
               memory: "1Gi"
               cpu: "1"
