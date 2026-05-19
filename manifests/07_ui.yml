@@ -35,10 +35,23 @@ spec:
             matchLabels:
               app: ui-service
 
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 2000
+
       containers:
         - name: ui-service
           image: starpal/mapreduce-ui-service:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8081
               name: http
@@ -144,11 +157,46 @@ spec:
           # Resource limits
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: "500m"
+              memory: "256Mi"
             limits:
               cpu: "500m"
               memory: "256Mi"
+
+---
+# PodDisruptionBudget
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ui-pdb
+  namespace: mapreduce
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ui-service
+
+---
+# HorizontalPodAutoscaler
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ui-hpa
+  namespace: mapreduce
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ui-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
 
 ---
 # ClusterIP Service (internal access)
