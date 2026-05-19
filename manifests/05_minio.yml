@@ -17,10 +17,20 @@ spec:
         app: minio
     spec:
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
 
       containers:
         - name: minio
           image: quay.io/minio/minio:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           command:
             - minio
             - server
@@ -48,6 +58,8 @@ spec:
           volumeMounts:
             - name: minio-data
               mountPath: /data
+            - name: tmp-dir
+              mountPath: /tmp
 
           readinessProbe:
             httpGet:
@@ -71,6 +83,10 @@ spec:
             limits:
               memory: "1Gi"
               cpu: "1"
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
 
   volumeClaimTemplates:
     - metadata:
