@@ -1,0 +1,12 @@
+.git
+.github
+.agents
+.claude
+build/
+docs/
+examples/
+test/
+*.exe
+*.bin
+coverage.out
+.env

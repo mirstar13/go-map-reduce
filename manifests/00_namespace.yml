@@ -4,3 +4,58 @@ metadata:
   name: mapreduce
   labels:
     app: mapreduce
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: mapreduce
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# UI Service: Allow ingress from Nginx Ingress Controller
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ui-ingress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: ui-service
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: controller
+              app.kubernetes.io/instance: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8081
+---
+# Allow UI to talk to Manager, Keycloak, MinIO
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ui-egress
+  namespace: mapreduce
+spec:
+  podSelector:
+    matchLabels:
+      app: ui-service
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: manager
+    - to:
+        - podSelector:
+            matchLabels:
+              app: keycloak
+    - to:
+        - podSelector:
+            matchLabels:
+              app: minio
