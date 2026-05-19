@@ -7,6 +7,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -43,6 +44,14 @@ type MapTaskSpec struct {
 	InputLength int64
 	MapperPath  string
 	NumReducers int
+}
+
+// BuildTaskSpec carries everything the Dispatcher needs to launch a builder.
+type BuildTaskSpec struct {
+	JobID      string
+	PluginType string // "mapper" | "reducer"
+	SourcePath string
+	OutputPath string
 }
 
 // ReduceTaskSpec carries everything the Dispatcher needs to launch a reduce worker.
@@ -114,6 +123,117 @@ func (d *Dispatcher) DispatchReduce(ctx context.Context, spec ReduceTaskSpec) (s
 	return jobName, d.createK8sJob(ctx, jobName, env)
 }
 
+// DispatchBuild creates a Kubernetes Job for a builder worker.
+func (d *Dispatcher) DispatchBuild(ctx context.Context, spec BuildTaskSpec) (string, error) {
+	prefix := "build-map"
+	if spec.PluginType == "reducer" {
+		prefix = "build-red"
+	}
+	jobName := fmt.Sprintf("%s-%s", prefix, spec.JobID[:8])
+
+	env := []corev1.EnvVar{
+		{Name: "JOB_ID", Value: spec.JobID},
+		{Name: "PLUGIN_TYPE", Value: spec.PluginType},
+		{Name: "SOURCE_PATH", Value: spec.SourcePath},
+		{Name: "OUTPUT_PATH", Value: spec.OutputPath},
+		{Name: "MANAGER_URL", Value: d.cfg.ManagerURL},
+		{Name: "MINIO_BUCKET_CODE", Value: d.cfg.MinioBucketCode},
+		d.minioEndpointVar(),
+		d.minioAccessKeyVar(),
+		d.minioSecretKeyVar(),
+	}
+
+	// Use the builder image instead of the worker image
+	ttl := int32(300)
+	backoffLimit := int32(0)
+	completions := int32(1)
+	parallelism := int32(1)
+
+	runAsNonRoot := true
+	runAsUser := int64(1000)
+	fsGroup := int64(1000)
+	allowPrivilegeEscalation := false
+	readOnlyRootFilesystem := true
+
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: d.cfg.WorkerNamespace,
+			Labels: map[string]string{
+				"app":        "mapreduce-builder",
+				"managed-by": "manager",
+			},
+		},
+		Spec: batchv1.JobSpec{
+			TTLSecondsAfterFinished: &ttl,
+			BackoffLimit:            &backoffLimit,
+			Completions:             &completions,
+			Parallelism:             &parallelism,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{
+						"app":      "mapreduce-builder",
+						"job-name": jobName,
+					},
+				},
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyNever,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: &runAsNonRoot,
+						RunAsUser:    &runAsUser,
+						FSGroup:      &fsGroup,
+					},
+					Containers: []corev1.Container{
+						{
+							Name:            "builder",
+							Image:           d.cfg.BuilderImage,
+							ImagePullPolicy: corev1.PullAlways,
+							Env:             env,
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								ReadOnlyRootFilesystem: &readOnlyRootFilesystem,
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "tmp",
+									MountPath: "/tmp",
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "tmp",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := d.k8s.BatchV1().Jobs(d.cfg.WorkerNamespace).Create(ctx, job, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("dispatcher: create k8s build job %s: %w", jobName, err)
+	}
+	return jobName, nil
+}
+
 // DeleteJob removes a Kubernetes Job and its pods (background propagation).
 // Safe to call even if the job no longer exists.
 func (d *Dispatcher) DeleteJob(ctx context.Context, jobName string) error {
@@ -133,6 +253,12 @@ func (d *Dispatcher) createK8sJob(ctx context.Context, name string, env []corev1
 	backoffLimit := int32(0) // Manager handles retries, not K8s
 	completions := int32(1)
 	parallelism := int32(1)
+
+	runAsNonRoot := true
+	runAsUser := int64(1000)
+	fsGroup := int64(1000)
+	allowPrivilegeEscalation := false
+	readOnlyRootFilesystem := true
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -157,12 +283,48 @@ func (d *Dispatcher) createK8sJob(ctx context.Context, name string, env []corev1
 				},
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyNever,
+					SecurityContext: &corev1.PodSecurityContext{
+						RunAsNonRoot: &runAsNonRoot,
+						RunAsUser:    &runAsUser,
+						FSGroup:      &fsGroup,
+					},
 					Containers: []corev1.Container{
 						{
 							Name:            "worker",
 							Image:           d.cfg.WorkerImage,
 							ImagePullPolicy: corev1.PullAlways,
 							Env:             env,
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+								Capabilities: &corev1.Capabilities{
+									Drop: []corev1.Capability{"ALL"},
+								},
+								ReadOnlyRootFilesystem: &readOnlyRootFilesystem,
+							},
+							Resources: corev1.ResourceRequirements{
+								Requests: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+								Limits: corev1.ResourceList{
+									corev1.ResourceCPU:    resource.MustParse("500m"),
+									corev1.ResourceMemory: resource.MustParse("512Mi"),
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "tmp",
+									MountPath: "/tmp",
+								},
+							},
+						},
+					},
+					Volumes: []corev1.Volume{
+						{
+							Name: "tmp",
+							VolumeSource: corev1.VolumeSource{
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
 						},
 					},
 				},
