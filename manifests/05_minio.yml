@@ -173,10 +173,20 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       initContainers:
         # Wait until the MinIO API is healthy before running mc.
         - name: wait-for-minio
           image: busybox:1.36
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           command:
             - sh
             - -c
@@ -187,10 +197,21 @@ spec:
                 sleep 3
               done
               echo "MinIO is ready."
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
       containers:
         - name: mc
           image: quay.io/minio/mc:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           env:
+            - name: HOME
+              value: /tmp
             - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
@@ -219,3 +240,9 @@ spec:
 
               echo "Buckets created successfully."
               mc ls local/
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
