@@ -13,6 +13,8 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/recover"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
 
 	"github.com/mirstar13/go-map-reduce/db"
@@ -51,6 +53,14 @@ func main() {
 	sqlDB := stdlib.OpenDBFromPool(pool)
 	queries := db.New(sqlDB)
 
+	minioClient, err := minio.New(cfg.MinioEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.MinioAccessKey, cfg.MinioSecretKey, ""),
+		Secure: cfg.MinioUseSSL,
+	})
+	if err != nil {
+		log.Fatal("init minio client", zap.Error(err))
+	}
+
 	spl, err := splitter.New(cfg)
 	if err != nil {
 		log.Fatal("init splitter", zap.Error(err))
@@ -68,7 +78,7 @@ func main() {
 
 	// Called from the job handler (new job) and from startup recovery.
 	launchSupervisor := func(job db.Job) {
-		sup := supervisor.New(job, queries, spl, disp, cfg, log, registry)
+		sup := supervisor.New(job, queries, spl, disp, minioClient, cfg, log, registry)
 		go sup.Run(rootCtx)
 	}
 
@@ -88,7 +98,7 @@ func main() {
 	go wd.Run(rootCtx)
 
 	jobHandler := handler.NewJobHandler(queries, registry, spl, disp, cfg, log, launchSupervisor)
-	taskHandler := handler.NewTaskHandler(queries, registry, log)
+	taskHandler := handler.NewTaskHandler(queries, registry, minioClient, cfg, log)
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: func(c fiber.Ctx, err error) error {
@@ -100,33 +110,16 @@ func main() {
 			}
 			return c.Status(code).JSON(fiber.Map{"error": msg})
 		},
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		ReadTimeout:  10 * time.Minute,
+		WriteTimeout: 10 * time.Minute,
 	})
 
 	app.Use(recover.New())
 	app.Use(fiberlog.New())
 
-	// The Manager is an internal service. It trusts the X-User-* headers that
-	// the UI service injects after validating the JWT — it does not re-validate
-	// the token itself. This is safe because the Manager's ClusterIP service is
-	// not reachable from outside the cluster.
-	internalAuth := auth.NewInternal()
-
 	app.Get("/healthz", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "replica": cfg.MyReplicaName})
 	})
-
-	api := app.Group("", internalAuth)
-
-	api.Post("/jobs", jobHandler.SubmitJob)
-	api.Get("/jobs", jobHandler.ListJobs)
-	api.Get("/jobs/:id", jobHandler.GetJob)
-	api.Post("/jobs/:id/cancel", jobHandler.CancelJob)
-	api.Get("/jobs/:id/output", jobHandler.GetJobOutput)
-
-	// Admin: all jobs regardless of owner
-	api.Get("/admin/jobs", jobHandler.AdminListJobs)
 
 	// Workers call these directly. No user auth — they are internal pod-to-pod
 	// calls within the cluster network.
@@ -134,6 +127,26 @@ func main() {
 	app.Post("/tasks/map/:id/fail", taskHandler.FailMapTask)
 	app.Post("/tasks/reduce/:id/complete", taskHandler.CompleteReduceTask)
 	app.Post("/tasks/reduce/:id/fail", taskHandler.FailReduceTask)
+
+	app.Post("/builds/:id/complete", taskHandler.CompleteBuild)
+	app.Post("/builds/:id/fail", taskHandler.FailBuild)
+
+	// The Manager is an internal service. It trusts the X-User-* headers that
+	// the UI service injects after validating the JWT — it does not re-validate
+	// the token itself. This is safe because the Manager's ClusterIP service is
+	// not reachable from outside the cluster.
+	internalAuth := auth.NewInternal()
+	api := app.Group("", internalAuth)
+
+	api.Post("/jobs", jobHandler.SubmitJob)
+	api.Get("/jobs", jobHandler.ListJobs)
+	api.Get("/jobs/:id", jobHandler.GetJob)
+	api.Delete("/jobs/:id", jobHandler.DeleteJob)
+	api.Post("/jobs/:id/cancel", jobHandler.CancelJob)
+	api.Get("/jobs/:id/output", jobHandler.GetJobOutput)
+
+	// Admin: all jobs regardless of owner
+	api.Get("/admin/jobs", jobHandler.AdminListJobs)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
