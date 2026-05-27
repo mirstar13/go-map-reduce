@@ -105,3 +105,10 @@ FROM map_tasks
 WHERE job_id = $1
   AND status = 'COMPLETED'
 ORDER BY task_index;
+
+
+-- name: GetMapTaskJobNames :many
+SELECT DISTINCT k8s_job_name
+FROM map_tasks
+WHERE job_id = $1
+  AND k8s_job_name IS NOT NULL;

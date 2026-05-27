@@ -44,12 +44,12 @@ UPDATE jobs
 SET
     status       = $2,
     started_at   = CASE
-                     WHEN $2 = 'MAP_PHASE' AND started_at IS NULL
+                     WHEN $2::varchar IN ('BUILDING', 'MAP_PHASE') AND started_at IS NULL
                      THEN NOW()
                      ELSE started_at
                    END,
     completed_at = CASE
-                     WHEN $2 IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                     WHEN $2::varchar IN ('COMPLETED', 'FAILED', 'CANCELLED')
                      THEN NOW()
                      ELSE completed_at
                    END
@@ -79,3 +79,20 @@ WHERE job_id = $1
 SELECT status, COUNT(*) AS count
 FROM jobs
 GROUP BY status;
+
+
+-- name: UpdateJobMapperPath :exec
+UPDATE jobs
+SET mapper_path = $2
+WHERE job_id = $1;
+
+
+-- name: UpdateJobReducerPath :exec
+UPDATE jobs
+SET reducer_path = $2
+WHERE job_id = $1;
+
+
+-- name: DeleteJob :exec
+DELETE FROM jobs
+WHERE job_id = $1;
