@@ -25,7 +25,7 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 
 ```
 ┌─────────────┐      ┌─────────────────┐       ┌──────────────────┐
-│   CLI       │────▶│   UI Service    │─────▶│  Manager Service │
+│   CLI       │────▶│   UI Service    |─────▶│  Manager Service │
 │  (mapreduce)│      │   (Gateway)     │       │  (Orchestrator)  │
 └─────────────┘      └─────────────────┘       └──────────────────┘
                             │                          │
@@ -37,7 +37,7 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
                             │                          │
                             ▼                          ▼
                      ┌───────────────┐         ┌───────────────┐
-                     │  PostgreSQL   │◀─────▶│     MinIO     │
+                     │  PostgreSQL   │◀──────▶│     MinIO     │
                      │  (State DB)   │         │   (Storage)   │
                      └───────────────┘         └───────────────┘
 ```
