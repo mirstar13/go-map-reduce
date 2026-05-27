@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -33,6 +34,7 @@ func init() {
 	jobsCmd.AddCommand(jobsOutputCmd)
 	jobsCmd.AddCommand(jobsWatchCmd)
 	jobsCmd.AddCommand(jobsDeleteCmd)
+	jobsCmd.AddCommand(jobsCatCmd)
 }
 
 var jobsListCmd = &cobra.Command{
@@ -150,14 +152,8 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 		// Calculate auto-scaling if enabled.
 		if f == submitFlags.input && submitFlags.auto {
 			sizeMB := float64(fi.Size()) / (1024 * 1024)
-			submitFlags.numMappers = int(math.Ceil(sizeMB / float64(cfg.MapperThresholdMB)))
-			if submitFlags.numMappers < 1 {
-				submitFlags.numMappers = 1
-			}
-			submitFlags.numReducers = submitFlags.numMappers / 2
-			if submitFlags.numReducers < 1 {
-				submitFlags.numReducers = 1
-			}
+			submitFlags.numMappers = max(int(math.Ceil(sizeMB/float64(cfg.MapperThresholdMB))), 1)
+			submitFlags.numReducers = max(submitFlags.numMappers/2, 1)
 			fmt.Printf("Auto-scaling: using %d mappers and %d reducers for %.2f MB input (threshold: %d MB)\n",
 				submitFlags.numMappers, submitFlags.numReducers, sizeMB, cfg.MapperThresholdMB)
 		}
@@ -310,6 +306,65 @@ mc (MinIO Client) tool:
 	},
 }
 
+var jobsCatCmd = &cobra.Command{
+	Use:   "cat <job-id>",
+	Short: "Stream job output results to terminal",
+	Long: `Download and print the results of all completed reduce tasks for a job.
+Files are streamed one by one to stdout.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c := newClient()
+		jobID := args[0]
+
+		// 1. Get output paths
+		var resp map[string]interface{}
+		if err := c.Get("/jobs/"+jobID+"/output", &resp); err != nil {
+			return err
+		}
+
+		raw, _ := json.Marshal(resp["output_paths"])
+		var paths []map[string]interface{}
+		_ = json.Unmarshal(raw, &paths)
+
+		if len(paths) == 0 {
+			return fmt.Errorf("no output found for job %s (ensure it is COMPLETED)", jobID)
+		}
+
+		// 2. Download and stream each file
+		for _, p := range paths {
+			path := strField(p, "output_path")
+			if path == "" {
+				continue
+			}
+
+			// Append the path as part of the URL (for wildcard endpoint /files/download/*)
+			// url.PathEscape encodes the path but keeps it safe for URL paths. 
+			// However, since we want the slash to be passed to the wildcard router,
+			// we should encode the segments and join them, or let Fiber handle the unescaped path.
+			// Let's use the path as-is or encode segments.
+			segments := strings.Split(path, "/")
+			for i, seg := range segments {
+				segments[i] = url.PathEscape(seg)
+			}
+			encodedPath := strings.Join(segments, "/")
+
+			downloadURL := fmt.Sprintf("/files/download/%s?bucket=output", encodedPath)
+			body, status, err := c.GetRaw(downloadURL)
+			if err != nil {
+				return fmt.Errorf("download %s: %w", path, err)
+			}
+			if status != 200 {
+				return fmt.Errorf("download %s: server returned %d", path, status)
+			}
+
+			// Print to stdout
+			_, _ = os.Stdout.Write(body)
+		}
+
+		return nil
+	},
+}
+
 var jobsWatchCmd = &cobra.Command{
 	Use:   "watch <job-id>",
 	Short: "Watch a job's progress in real-time",
@@ -453,6 +508,17 @@ func strField(m map[string]interface{}, key string) string {
 	if !ok || v == nil {
 		return ""
 	}
+
+	// Handle sql.NullString which comes back as a map if not unmarshaled into a struct.
+	if mm, ok := v.(map[string]interface{}); ok {
+		if s, ok := mm["String"].(string); ok {
+			if valid, ok := mm["Valid"].(bool); ok && !valid {
+				return ""
+			}
+			return s
+		}
+	}
+
 	return fmt.Sprintf("%v", v)
 }
 

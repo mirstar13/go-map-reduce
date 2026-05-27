@@ -28,6 +28,7 @@ import (
 // mockSplitter satisfies the Splitter interface.
 type mockSplitter struct {
 	computeFn func(ctx context.Context, objectKey string, numSplits int) ([]splitter.Split, error)
+	getSizeFn func(ctx context.Context, objectKey string) (int64, error)
 }
 
 func (m *mockSplitter) Compute(ctx context.Context, key string, n int) ([]splitter.Split, error) {
@@ -35,6 +36,13 @@ func (m *mockSplitter) Compute(ctx context.Context, key string, n int) ([]splitt
 		return m.computeFn(ctx, key, n)
 	}
 	panic("mockSplitter.Compute: not implemented")
+}
+
+func (m *mockSplitter) GetSize(ctx context.Context, key string) (int64, error) {
+	if m.getSizeFn != nil {
+		return m.getSizeFn(ctx, key)
+	}
+	return 0, nil
 }
 
 // mockDispatcher satisfies the Dispatcher interface.

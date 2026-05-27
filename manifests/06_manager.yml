@@ -113,6 +113,8 @@ spec:
             # across all healthy replicas (any replica can handle any callback).
             - name: MANAGER_URL
               value: "http://manager-api.mapreduce.svc.cluster.local:8080"
+            - name: BUILDER_URL
+              value: "http://builder-api.mapreduce.svc.cluster.local:8080"
 
             # PostgreSQL
             - name: POSTGRES_DSN

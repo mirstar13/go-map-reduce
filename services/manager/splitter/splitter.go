@@ -37,6 +37,15 @@ func New(cfg *config.Config) (*Splitter, error) {
 	return &Splitter{client: mc, cfg: cfg}, nil
 }
 
+// GetSize returns the size of the object in MinIO.
+func (s *Splitter) GetSize(ctx context.Context, objectKey string) (int64, error) {
+	stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, objectKey, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, fmt.Errorf("splitter: stat %s: %w", objectKey, err)
+	}
+	return stat.Size, nil
+}
+
 // Compute divides the object at `objectKey` in the input bucket into
 // `numSplits` byte-range splits, each boundary snapped to the next newline.
 // This mirrors the design doc's splitting logic exactly.

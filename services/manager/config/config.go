@@ -30,6 +30,7 @@ type Config struct {
 	WorkerImage     string // WORKER_IMAGE
 	BuilderImage    string // BUILDER_IMAGE
 	WorkerNamespace string // WORKER_NAMESPACE
+	BuilderURL      string // BUILDER_URL
 	// ManagerURL is advertised to workers for POST /tasks/*/complete|fail callbacks.
 	ManagerURL string // MANAGER_URL
 
@@ -70,6 +71,7 @@ func Load() (*Config, error) {
 	v.SetDefault("builder_image", "starpal/mapreduce-builder:latest")
 	v.SetDefault("worker_namespace", "mapreduce")
 	v.SetDefault("manager_url", "http://manager-api.mapreduce.svc.cluster.local:8080")
+	v.SetDefault("builder_url", "http://builder-api.mapreduce.svc.cluster.local:8080")
 	v.SetDefault("task_timeout_seconds", 300)
 	v.SetDefault("task_max_retries", 3)
 	v.SetDefault("log_level", "info")
@@ -90,6 +92,7 @@ func Load() (*Config, error) {
 		WorkerImage:        v.GetString("worker_image"),
 		BuilderImage:       v.GetString("builder_image"),
 		WorkerNamespace:    v.GetString("worker_namespace"),
+		BuilderURL:         v.GetString("builder_url"),
 		ManagerURL:         v.GetString("manager_url"),
 		TaskTimeoutSeconds: v.GetInt("task_timeout_seconds"),
 		TaskMaxRetries:     v.GetInt("task_max_retries"),

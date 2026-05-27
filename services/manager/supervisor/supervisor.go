@@ -154,7 +154,7 @@ func (s *Supervisor) isTerminal() bool {
 func (s *Supervisor) Cleanup(ctx context.Context) {
 	s.log.Info("cleaning up Kubernetes resources")
 
-	// 1. Delete builder jobs (known patterns)
+	// 0. Delete build jobs (if any)
 	shortID := s.jobID.String()
 	if len(shortID) > 8 {
 		shortID = shortID[:8]
@@ -162,7 +162,7 @@ func (s *Supervisor) Cleanup(ctx context.Context) {
 	_ = s.dispatcher.DeleteJob(ctx, fmt.Sprintf("build-map-%s", shortID))
 	_ = s.dispatcher.DeleteJob(ctx, fmt.Sprintf("build-red-%s", shortID))
 
-	// 2. Delete map task jobs
+	// 1. Delete map task jobs
 	mapJobNames, err := s.queries.GetMapTaskJobNames(ctx, s.jobID)
 	if err == nil {
 		for _, name := range mapJobNames {
@@ -281,6 +281,29 @@ func (s *Supervisor) checkMapPhase(ctx context.Context) error {
 		zap.Int64("total", counts.Total),
 	)
 
+	// Straggler Mitigation (Backup Tasks):
+	// If most tasks are done, re-dispatch everything that isn't finished.
+	if counts.Total > 10 && float64(counts.Completed)/float64(counts.Total) > 0.95 {
+		nonDone, _ := s.queries.GetMapTasksByJob(ctx, s.jobID)
+		for _, task := range nonDone {
+			if task.Status != "COMPLETED" && task.Status != "FAILED" && task.RetryCount < int32(s.cfg.TaskMaxRetries) {
+				s.log.Info("dispatching backup map task for straggler", zap.Int32("index", task.TaskIndex))
+				// We don't mark it RUNNING in the DB yet to avoid breaking state,
+				// but the dispatcher creates a new K8s Job.
+				_, _ = s.dispatcher.DispatchMap(ctx, dispatcher.MapTaskSpec{
+					TaskID:      task.TaskID.String(),
+					JobID:       s.jobID.String(),
+					TaskIndex:   int(task.TaskIndex),
+					InputFile:   task.InputFile,
+					InputOffset: task.InputOffset,
+					InputLength: task.InputLength,
+					MapperPath:  s.job.MapperPath,
+					NumReducers: int(s.job.NumReducers),
+				})
+			}
+		}
+	}
+
 	if counts.Failed > 0 && counts.Completed+counts.Failed == counts.Total {
 		return s.failJob(ctx, fmt.Sprintf("%d map task(s) failed permanently", counts.Failed))
 	}
@@ -380,6 +403,47 @@ func (s *Supervisor) checkReducePhase(ctx context.Context) error {
 		zap.Int64("failed", counts.Failed),
 		zap.Int64("total", counts.Total),
 	)
+
+	// Straggler Mitigation (Backup Tasks):
+	if counts.Total > 5 && float64(counts.Completed)/float64(counts.Total) > 0.95 {
+		nonDone, _ := s.queries.GetReduceTasksByJob(ctx, s.jobID)
+		for _, task := range nonDone {
+			if task.Status != "COMPLETED" && task.Status != "FAILED" && task.RetryCount < int32(s.cfg.TaskMaxRetries) {
+				s.log.Info("dispatching backup reduce task for straggler", zap.Int32("index", task.TaskIndex))
+				
+				// Re-query map output locations for this reducer index
+				mapOutputs, _ := s.queries.GetMapTaskOutputLocations(ctx, s.jobID)
+				type loc struct {
+					ReducerIndex int    `json:"reducer_index"`
+					Path         string `json:"path"`
+				}
+				var inputLocs []loc
+				for _, mo := range mapOutputs {
+					if !mo.OutputLocations.Valid {
+						continue
+					}
+					var files []loc
+					if err := json.Unmarshal(mo.OutputLocations.RawMessage, &files); err != nil {
+						continue
+					}
+					for _, f := range files {
+						if f.ReducerIndex == int(task.TaskIndex) {
+							inputLocs = append(inputLocs, f)
+						}
+					}
+				}
+				locsJSON, _ := json.Marshal(inputLocs)
+
+				_, _ = s.dispatcher.DispatchReduce(ctx, dispatcher.ReduceTaskSpec{
+					TaskID:         task.TaskID.String(),
+					JobID:          s.jobID.String(),
+					TaskIndex:      int(task.TaskIndex),
+					ReducerPath:    s.job.ReducerPath,
+					InputLocations: json.RawMessage(locsJSON),
+				})
+			}
+		}
+	}
 
 	if counts.Failed > 0 && counts.Completed+counts.Failed == counts.Total {
 		return s.failJob(ctx, fmt.Sprintf("%d reduce task(s) failed permanently", counts.Failed))

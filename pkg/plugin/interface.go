@@ -14,6 +14,14 @@ type Mapper interface {
 	Map(key, value string) ([]Record, error)
 }
 
+// Combiner is an optional interface for local aggregation on the mapper node.
+// If implemented, the worker will use it to reduce data before the shuffle phase.
+type Combiner interface {
+	// Combine processes multiple values for a single key and returns zero or more output records.
+	// It usually follows the same logic as the Reducer to minimize data transfer.
+	Combine(key string, values []string) ([]Record, error)
+}
+
 // Reducer is the interface that reducer plugins must implement.
 // The Reduce function receives a key and all values associated with that key.
 type Reducer interface {

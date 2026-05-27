@@ -34,6 +34,30 @@ func (h *FileHandler) UploadCode(c fiber.Ctx) error {
 	return h.streamUpload(c, "code")
 }
 
+// DownloadFile handles streaming download for an object from the 'output' bucket.
+func (h *FileHandler) DownloadFile(c fiber.Ctx) error {
+	path := c.Params("*")
+	if path == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "path is required in URL"})
+	}
+
+	bucket := c.Query("bucket", "output")
+
+	reader, err := h.minio.DownloadFile(c.Context(), bucket, path)
+	if err != nil {
+		h.log.Error("download: minio error", zap.String("bucket", bucket), zap.String("path", path), zap.Error(err))
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file not found or inaccessible"})
+	}
+
+	// In Fiber v3, SendStream will read until EOF. 
+	// To ensure the reader is closed after streaming, we can wrap it or trust Fiber
+	// if it's a blocking call. If it's non-blocking, we need to be careful.
+	// However, the 502 suggests the connection was dropped.
+	// Let's set the content type and stream it.
+	c.Set(fiber.HeaderContentType, "text/plain")
+	return c.SendStream(reader)
+}
+
 // streamUpload uses a multipart reader to stream the file directly to MinIO
 // without buffering the entire body in memory.
 func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {

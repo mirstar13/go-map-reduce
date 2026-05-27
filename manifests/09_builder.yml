@@ -1,0 +1,102 @@
+---
+# Builder Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: builder-service
+  namespace: mapreduce
+  labels:
+    app: mapreduce-builder
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mapreduce-builder
+  template:
+    metadata:
+      labels:
+        app: mapreduce-builder
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: builder
+          image: starpal/mapreduce-builder:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false # Required for Go build cache
+          env:
+            - name: BUILDER_PORT
+              value: "8080"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: MANAGER_URL
+              value: "http://manager-api.mapreduce.svc.cluster.local:8080"
+            - name: MINIO_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: MINIO_ENDPOINT
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: mapreduce-secrets
+                  key: MINIO_SECRET_KEY
+            - name: MINIO_BUCKET_CODE
+              value: "code"
+            - name: HOME
+              value: "/tmp"
+            - name: GOCACHE
+              value: "/tmp/go-cache"
+            - name: GOMODCACHE
+              value: "/tmp/go-mod"
+            - name: GOPATH
+              value: "/tmp/go"
+            - name: CGO_ENABLED
+              value: "0"
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "2Gi"
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+
+---
+# Builder Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: builder-api
+  namespace: mapreduce
+  labels:
+    app: mapreduce-builder
+spec:
+  selector:
+    app: mapreduce-builder
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+  type: ClusterIP

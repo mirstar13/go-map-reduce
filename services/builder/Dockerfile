@@ -13,23 +13,23 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary with CGO disabled for static linking
+# Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -v -ldflags="-s -w" -o /bin/builder ./services/builder
 
 # Final stage
 FROM golang:1.25-alpine
 
-# Install build dependencies for go-plugin (if any CGO were needed, but we use CGO_ENABLED=0)
-# We need git for go mod download/tidy
+# Install build dependencies for go-plugin
 RUN apk add --no-cache git ca-certificates tzdata build-base
 
 # Create non-root user with a home directory
 RUN addgroup -S appgroup && adduser -D -S appuser -G appgroup
 
 # Create and grant permissions to Go cache directories
-RUN mkdir -p /.cache /tmp/go-cache /tmp/go-mod /tmp/go && \
-    chmod -R 777 /.cache /tmp/go-cache /tmp/go-mod /tmp/go
+# We will use /tmp for everything to ensure it's writable
+RUN mkdir -p /tmp/go-cache /tmp/go-mod /tmp/go /tmp/builder && \
+    chmod -R 777 /tmp
 
 USER appuser
 
@@ -51,4 +51,5 @@ RUN go mod download
 
 # Entry point
 WORKDIR /app
+EXPOSE 8080
 ENTRYPOINT ["/bin/builder"]

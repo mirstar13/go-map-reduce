@@ -76,6 +76,25 @@ func (m *MapperRPCClient) Map(key, value string) ([]Record, error) {
 	return reply.Records, nil
 }
 
+func (m *MapperRPCClient) Combine(key string, values []string) ([]Record, error) {
+	if combiner, ok := m.client.Service.(Combiner); ok {
+		return combiner.Combine(key, values)
+	}
+
+	// Combiner is optional. If not natively supported by the RPC service, 
+	// we check if the server implementation actually has the method.
+	var reply ReduceReply // Re-use ReduceReply for Combine
+	err := m.client.Call("Plugin.Combine", &ReduceArgs{Key: key, Values: values}, &reply)
+	if err != nil {
+		// If the method doesn't exist, we just return an error that the caller can handle (skip combining).
+		return nil, err
+	}
+	if reply.Error != "" {
+		return nil, &PluginError{Message: reply.Error}
+	}
+	return reply.Records, nil
+}
+
 // MapperRPCServer is an RPC server implementation that wraps a Mapper.
 type MapperRPCServer struct {
 	Impl Mapper
@@ -83,6 +102,21 @@ type MapperRPCServer struct {
 
 func (s *MapperRPCServer) Map(args *MapArgs, reply *MapReply) error {
 	records, err := s.Impl.Map(args.Key, args.Value)
+	if err != nil {
+		reply.Error = err.Error()
+		return nil
+	}
+	reply.Records = records
+	return nil
+}
+
+func (s *MapperRPCServer) Combine(args *ReduceArgs, reply *ReduceReply) error {
+	combiner, ok := s.Impl.(Combiner)
+	if !ok {
+		reply.Error = "Combiner not implemented"
+		return nil
+	}
+	records, err := combiner.Combine(args.Key, args.Values)
 	if err != nil {
 		reply.Error = err.Error()
 		return nil

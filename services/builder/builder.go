@@ -12,23 +12,26 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/mirstar13/go-map-reduce/services/builder/config"
 )
 
 func main() {
-	log, err := zap.NewProduction()
+	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build logger: %v\n", err)
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
 		os.Exit(1)
 	}
+
+	log := initLogger(cfg.LogLevel)
 	defer log.Sync() //nolint:errcheck
 
 	// Set environment variables for Go toolchain globally for this process and children.
-	// This ensures consistency across all exec.Command calls.
 	os.Setenv("HOME", "/tmp")
 	os.Setenv("GOCACHE", "/tmp/go-cache")
 	os.Setenv("GOMODCACHE", "/tmp/go-mod")
@@ -36,20 +39,11 @@ func main() {
 	os.Setenv("CGO_ENABLED", "0")
 	os.Setenv("GOPROXY", "https://proxy.golang.org,direct")
 
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatal("configuration error", zap.Error(err))
-	}
-
-	log.Info("builder starting",
-		zap.String("job_id", cfg.JobID),
-		zap.String("plugin_type", string(cfg.PluginType)),
-		zap.String("source", cfg.SourcePath),
-		zap.String("output", cfg.OutputPath),
-	)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
+	// Pre-create Go cache directories in /tmp
+	_ = os.MkdirAll("/tmp/go-cache", 0777)
+	_ = os.MkdirAll("/tmp/go-mod", 0777)
+	_ = os.MkdirAll("/tmp/go", 0777)
+	_ = os.MkdirAll("/tmp/builder", 0777)
 
 	minioClient, err := minio.New(cfg.MinioEndpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.MinioAccessKey, cfg.MinioSecretKey, ""),
@@ -66,24 +60,20 @@ func main() {
 		tmpDir: "/tmp/builder",
 	}
 
-	// Pre-create Go cache directories in /tmp (which is a writable emptyDir)
-	_ = os.MkdirAll("/tmp/go-cache", 0755)
-	_ = os.MkdirAll("/tmp/go-mod", 0755)
-	_ = os.MkdirAll("/tmp/go", 0755)
+	app := fiber.New(fiber.Config{
+		AppName: "Builder Service",
+	})
 
-	if err := os.MkdirAll(b.tmpDir, 0755); err != nil {
-		log.Fatal("failed to create tmp dir", zap.Error(err))
+	app.Get("/healthz", func(c fiber.Ctx) error {
+		return c.SendStatus(fiber.StatusOK)
+	})
+
+	app.Post("/build", b.handleBuild)
+
+	log.Info("builder service starting", zap.String("port", cfg.Port))
+	if err := app.Listen(":" + cfg.Port); err != nil {
+		log.Fatal("server failed", zap.Error(err))
 	}
-
-	if err := b.run(ctx); err != nil {
-		log.Error("build failed", zap.Error(err))
-		if callbackErr := b.reportFailure(ctx, err.Error()); callbackErr != nil {
-			log.Error("failed to report failure", zap.Error(callbackErr))
-		}
-		os.Exit(1)
-	}
-
-	log.Info("build completed successfully")
 }
 
 type builder struct {
@@ -93,52 +83,80 @@ type builder struct {
 	tmpDir string
 }
 
-// run executes the build process:
-// 1. Download source .go file from MinIO
-// 2. Generate plugin wrapper code
-// 3. Compile to plugin binary
-// 4. Upload compiled binary to MinIO
-// 5. Report completion to Manager
-func (b *builder) run(ctx context.Context) error {
-	// Create a unique build directory
-	buildDir := filepath.Join(b.tmpDir, b.cfg.JobID)
+type buildRequest struct {
+	JobID      string `json:"job_id"`
+	PluginType string `json:"plugin_type"` // "mapper" | "reducer"
+	SourcePath string `json:"source_path"`
+	OutputPath string `json:"output_path"`
+}
+
+func (b *builder) handleBuild(c fiber.Ctx) error {
+	var req buildRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+	}
+
+	b.log.Info("received build request",
+		zap.String("job_id", req.JobID),
+		zap.String("type", req.PluginType),
+		zap.String("source", req.SourcePath),
+	)
+
+	// Run build in a background goroutine to not block the request
+	// and use the callback to report status.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+
+		if err := b.runBuild(ctx, req); err != nil {
+			b.log.Error("build failed", zap.String("job_id", req.JobID), zap.Error(err))
+			if reportErr := b.reportFailure(ctx, req.JobID, req.PluginType, err.Error()); reportErr != nil {
+				b.log.Error("failed to report failure", zap.Error(reportErr))
+			}
+		} else {
+			b.log.Info("build successful", zap.String("job_id", req.JobID))
+			if reportErr := b.reportSuccess(ctx, req.JobID, req.PluginType, req.OutputPath); reportErr != nil {
+				b.log.Error("failed to report success", zap.Error(reportErr))
+			}
+		}
+	}()
+
+	return c.SendStatus(fiber.StatusAccepted)
+}
+
+func (b *builder) runBuild(ctx context.Context, req buildRequest) error {
+	buildDir := filepath.Join(b.tmpDir, req.JobID+"-"+req.PluginType)
+	_ = os.RemoveAll(buildDir)
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		return fmt.Errorf("create build dir: %w", err)
 	}
 
-	// Download source file
 	sourcePath := filepath.Join(buildDir, "plugin.go")
-	if err := b.downloadFile(ctx, b.cfg.SourcePath, sourcePath); err != nil {
+	if err := b.downloadFile(ctx, req.SourcePath, sourcePath); err != nil {
 		return fmt.Errorf("download source: %w", err)
 	}
 
-	// Generate the plugin main wrapper
 	mainPath := filepath.Join(buildDir, "main.go")
-	if err := b.generateMain(mainPath); err != nil {
+	if err := b.generateMain(mainPath, req.PluginType); err != nil {
 		return fmt.Errorf("generate main: %w", err)
 	}
 
-	// Initialize go module
 	if err := b.initGoModule(ctx, buildDir); err != nil {
 		return fmt.Errorf("init go module: %w", err)
 	}
 
-	// Compile the plugin
 	binaryPath := filepath.Join(buildDir, "plugin")
 	if err := b.compile(ctx, buildDir, binaryPath); err != nil {
 		return fmt.Errorf("compile: %w", err)
 	}
 
-	// Upload compiled plugin
-	if err := b.uploadFile(ctx, binaryPath, b.cfg.OutputPath); err != nil {
+	if err := b.uploadFile(ctx, binaryPath, req.OutputPath); err != nil {
 		return fmt.Errorf("upload plugin: %w", err)
 	}
 
-	// Report success
-	return b.reportSuccess(ctx)
+	return nil
 }
 
-// downloadFile downloads a file from MinIO to a local path.
 func (b *builder) downloadFile(ctx context.Context, objectKey, localPath string) error {
 	obj, err := b.minio.GetObject(ctx, b.cfg.MinioBucketCode, objectKey, minio.GetObjectOptions{})
 	if err != nil {
@@ -155,62 +173,40 @@ func (b *builder) downloadFile(ctx context.Context, objectKey, localPath string)
 	if _, err := io.Copy(f, obj); err != nil {
 		return fmt.Errorf("copy object: %w", err)
 	}
-
-	b.log.Debug("downloaded file", zap.String("object", objectKey), zap.String("local", localPath))
 	return nil
 }
 
-// generateMain creates the plugin main.go that wraps the user's implementation.
-func (b *builder) generateMain(path string) error {
-	var code string
-
-	if b.cfg.PluginType == config.PluginTypeMapper {
-		code = mapperMain
-	} else {
+func (b *builder) generateMain(path, pType string) error {
+	code := mapperMain
+	if pType == "reducer" {
 		code = reducerMain
 	}
-
-	if err := os.WriteFile(path, []byte(code), 0644); err != nil {
-		return fmt.Errorf("write main.go: %w", err)
-	}
-
-	b.log.Debug("generated main.go", zap.String("path", path))
-	return nil
+	return os.WriteFile(path, []byte(code), 0644)
 }
 
-// initGoModule initializes a go module in the build directory.
 func (b *builder) initGoModule(ctx context.Context, buildDir string) error {
-	// 1. go mod init
 	cmd := exec.CommandContext(ctx, "go", "mod", "init", "userplugin")
 	cmd.Dir = buildDir
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("go mod init: %w", err)
 	}
 
-	// 2. go mod edit -replace
-	// Point to the core project source we copied into the image
 	cmd = exec.CommandContext(ctx, "go", "mod", "edit", "-replace", "github.com/mirstar13/go-map-reduce=/app/core")
 	cmd.Dir = buildDir
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("go mod edit -replace: %w", err)
 	}
 
-	// 3. go mod tidy
 	cmd = exec.CommandContext(ctx, "go", "mod", "tidy")
 	cmd.Dir = buildDir
-
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-
 	if err := cmd.Run(); err != nil {
 		b.log.Warn("go mod tidy failed", zap.String("stderr", stderr.String()))
-		// We proceed anyway as the build might still work if the module cache is warm
 	}
-
 	return nil
 }
 
-// compile builds the plugin binary.
 func (b *builder) compile(ctx context.Context, buildDir, outputPath string) error {
 	cmd := exec.CommandContext(ctx, "go", "build",
 		"-o", outputPath,
@@ -224,22 +220,12 @@ func (b *builder) compile(ctx context.Context, buildDir, outputPath string) erro
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	b.log.Info("compiling plugin", zap.String("dir", buildDir))
-
 	if err := cmd.Run(); err != nil {
-		b.log.Error("compilation failed",
-			zap.String("stdout", stdout.String()),
-			zap.String("stderr", stderr.String()),
-			zap.Error(err),
-		)
 		return fmt.Errorf("go build failed: %s", stderr.String())
 	}
-
-	b.log.Info("compilation successful", zap.String("output", outputPath))
 	return nil
 }
 
-// uploadFile uploads a local file to MinIO.
 func (b *builder) uploadFile(ctx context.Context, localPath, objectKey string) error {
 	f, err := os.Open(localPath)
 	if err != nil {
@@ -256,76 +242,66 @@ func (b *builder) uploadFile(ctx context.Context, localPath, objectKey string) e
 		f, stat.Size(),
 		minio.PutObjectOptions{ContentType: "application/octet-stream"},
 	)
-	if err != nil {
-		return fmt.Errorf("put object: %w", err)
-	}
-
-	b.log.Info("uploaded plugin", zap.String("object", objectKey), zap.Int64("size", stat.Size()))
-	return nil
+	return err
 }
 
-// reportSuccess sends a success callback to the Manager.
-func (b *builder) reportSuccess(ctx context.Context) error {
-	url := fmt.Sprintf("%s/builds/%s/complete", b.cfg.ManagerURL, b.cfg.JobID)
-
-	body, err := json.Marshal(map[string]interface{}{
-		"plugin_type": string(b.cfg.PluginType),
-		"plugin_path": b.cfg.OutputPath,
+func (b *builder) reportSuccess(ctx context.Context, jobID, pType, outputPath string) error {
+	url := fmt.Sprintf("%s/builds/%s/complete", b.cfg.ManagerURL, jobID)
+	body, _ := json.Marshal(map[string]interface{}{
+		"plugin_type": pType,
+		"plugin_path": outputPath,
 	})
-	if err != nil {
-		return fmt.Errorf("marshal body: %w", err)
-	}
-
 	return b.doCallback(ctx, url, body)
 }
 
-// reportFailure sends a failure callback to the Manager.
-func (b *builder) reportFailure(ctx context.Context, errMsg string) error {
-	url := fmt.Sprintf("%s/builds/%s/fail", b.cfg.ManagerURL, b.cfg.JobID)
-
-	body, err := json.Marshal(map[string]interface{}{
-		"plugin_type": string(b.cfg.PluginType),
+func (b *builder) reportFailure(ctx context.Context, jobID, pType, errMsg string) error {
+	url := fmt.Sprintf("%s/builds/%s/fail", b.cfg.ManagerURL, jobID)
+	body, _ := json.Marshal(map[string]interface{}{
+		"plugin_type": pType,
 		"error":       errMsg,
 	})
-	if err != nil {
-		return fmt.Errorf("marshal body: %w", err)
-	}
-
 	return b.doCallback(ctx, url, body)
 }
 
-// doCallback performs an HTTP POST to the Manager.
 func (b *builder) doCallback(ctx context.Context, url string, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("do request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("callback failed with status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("callback failed (%d): %s", resp.StatusCode, string(respBody))
 	}
-
-	b.log.Info("callback successful", zap.String("url", url))
 	return nil
 }
 
-// mapperMain is the generated main.go for mapper plugins.
-const mapperMain = `package main
+func initLogger(level string) *zap.Logger {
+	var zapLevel zapcore.Level
+	if err := zapLevel.UnmarshalText([]byte(level)); err != nil {
+		zapLevel = zap.InfoLevel
+	}
 
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(zapLevel)
+	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	logger, _ := config.Build()
+	return logger
+}
+
+const mapperMain = `package main
 import (
 	"github.com/hashicorp/go-plugin"
 	mrplugin "github.com/mirstar13/go-map-reduce/pkg/plugin"
 )
-
 func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: mrplugin.Handshake,
@@ -336,14 +312,11 @@ func main() {
 }
 `
 
-// reducerMain is the generated main.go for reducer plugins.
 const reducerMain = `package main
-
 import (
 	"github.com/hashicorp/go-plugin"
 	mrplugin "github.com/mirstar13/go-map-reduce/pkg/plugin"
 )
-
 func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: mrplugin.Handshake,

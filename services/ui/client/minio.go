@@ -47,6 +47,21 @@ func (m *MinioClient) UploadCode(ctx context.Context, filename string, r io.Read
 	return m.upload(ctx, m.cfg.MinioBucketCode, key, r, size, contentType(filename))
 }
 
+// DownloadFile returns a reader for an object in the given bucket.
+func (m *MinioClient) DownloadFile(ctx context.Context, bucket, objectPath string) (io.ReadCloser, error) {
+	obj, err := m.client.GetObject(ctx, bucket, objectPath, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("minio: get object %s/%s: %w", bucket, objectPath, err)
+	}
+	// Check if object exists by getting its info.
+	_, err = obj.Stat()
+	if err != nil {
+		obj.Close()
+		return nil, fmt.Errorf("minio: stat object %s/%s: %w", bucket, objectPath, err)
+	}
+	return obj, nil
+}
+
 // PresignOutput generates a presigned GET URL for an output object.
 // The URL expires after 1 hour and can be given directly to the CLI user.
 func (m *MinioClient) PresignOutput(ctx context.Context, objectPath string) (string, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -96,11 +97,42 @@ func (h *JobHandler) SubmitJob(c fiber.Ctx) error {
 			"error": "mapper_path, reducer_path and input_path are required",
 		})
 	}
-	if req.NumMappers < 1 {
-		req.NumMappers = 1
-	}
-	if req.NumReducers < 1 {
-		req.NumReducers = 1
+	if req.NumMappers < 1 || req.NumReducers < 1 {
+		// Auto-calculate based on input size
+		size, err := h.splitter.GetSize(c.Context(), req.InputPath)
+		if err == nil {
+			sizeMB := float64(size) / (1024 * 1024)
+			const thresholdMB = 10.0 // 1 mapper per 10MB
+
+			if req.NumMappers < 1 {
+				req.NumMappers = int32(math.Ceil(sizeMB / thresholdMB))
+				if req.NumMappers < 1 {
+					req.NumMappers = 1
+				}
+			}
+
+			if req.NumReducers < 1 {
+				// Based on user feedback (~40 mappers, ~80 reducers), use 2x ratio
+				req.NumReducers = req.NumMappers * 2
+				if req.NumReducers < 1 {
+					req.NumReducers = 1
+				}
+			}
+
+			h.log.Info("auto-scaling tasks",
+				zap.Int64("size_bytes", size),
+				zap.Int32("mappers", req.NumMappers),
+				zap.Int32("reducers", req.NumReducers),
+			)
+		} else {
+			h.log.Warn("could not get input size for auto-scaling; defaulting to 1", zap.Error(err))
+			if req.NumMappers < 1 {
+				req.NumMappers = 1
+			}
+			if req.NumReducers < 1 {
+				req.NumReducers = 1
+			}
+		}
 	}
 	if req.InputFormat == "" {
 		req.InputFormat = "jsonl"

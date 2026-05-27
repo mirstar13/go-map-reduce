@@ -7,9 +7,9 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 | Document | Description |
 |----------|-------------|
 | [Local Development](test/README.md) | Setup instructions for local development and testing |
-| [Examples](examples/README.md) | Sample MapReduce jobs (WordCount, Inverted Index) |
-| [Word Count Example](examples/wordcount/) | Classic MapReduce word frequency counter |
-| [Inverted Index Example](examples/inverted-index/) | Build word-to-document index |
+| [Word Count Example](examples/wordcount/README.md) | Classic MapReduce word frequency counter |
+| [Inverted Index Example](examples/inverted-index/README.md) | Build word-to-document index |
+| [Graph Algorithms](examples/graph/README.md) | Iterative graph algorithms including PageRank, BFS, and Connected Components |
 
 ## Features
 
@@ -72,22 +72,22 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
 - [Go 1.25+](https://golang.org/dl/) (for development)
 
-### Deploy to Minikube
+### Makefile Commands
+
+The project includes a `Makefile` to simplify local development and deployment:
 
 ```bash
-# Start minikube and deploy all services
+# Start minikube and deploy all services (PostgreSQL, MinIO, Keycloak, etc.)
 make minikube-start
 
-# This runs:
-#   minikube start --cpus=4 --memory=6144 --disk-size=20g
-#   kubectl apply -f ./manifests/
-#   minikube addons enable ingress
-```
-
-### Build Docker Images
-
-```bash
+# Build Docker images for all services locally
 make docker-build
+
+# Build and push Docker images (multi-platform)
+make docker-build-push
+
+# Run tests and generate HTML coverage report
+make test-coverage
 ```
 
 ### Install CLI
@@ -149,6 +149,20 @@ Automate multiple iterations of a job to measure performance and cluster stabili
 go run cmd/benchmark-runner/main.go ./input.txt mapper.go reducer.go 5
 ```
 
+## Graph Algorithms & Examples
+
+The `examples/` directory contains a variety of jobs:
+
+1. **Word Count**: Basic frequency counter.
+2. **Inverted Index**: Builds an index mapping words to their document of origin.
+3. **Graph Algorithms** (`examples/graph/`):
+   - **PageRank**: Iteratively calculates node importance.
+   - **BFS**: Shortest path calculation.
+   - **Connected Components (CC)**: Cluster detection using Label Propagation.
+   - **Triangle Counting**: Two-stage MapReduce job to count triangles in a graph.
+
+These graph algorithms are designed to be run iteratively and benchmarked using large datasets like Google+ circles or Stack Overflow networks.
+
 ## Writing Map/Reduce Functions
 
 Functions are written in Go and executed as plugins.
@@ -209,12 +223,12 @@ var Reducer plugin.Reducer = &ReducerImpl{}
 │   ├── cli/              # Command-line interface
 │   ├── benchmark-runner/ # Automated performance testing tool
 │   └── migrate/          # Database migration tool
-├── db/                   # Generated sqlc code
-├── examples/             # Sample Go plugins and graph algorithms
+├── db/                   # Generated sqlc code (run `sqlc generate` to update)
+├── examples/             # Sample Go plugins (WordCount, Graph algorithms, etc.)
 ├── manifests/            # Kubernetes manifests (Deployments, Services, etc.)
 ├── pkg/
-│   ├── plugin/           # Plugin interface and RPC definitions
-│   ├── middleware/       # JWT and RBAC middleware
+│   ├── plugin/           # HashiCorp go-plugin interface and RPC definitions
+│   ├── middleware/       # JWT authentication and RBAC middleware
 │   └── logger/           # Structured logging (zap)
 ├── services/
 │   ├── manager/          # Job orchestration service
@@ -233,6 +247,15 @@ var Reducer plugin.Reducer = &ReducerImpl{}
 - **Retries**: Automatically reschedules failed tasks up to 3 times on different nodes.
 - **Building Phase Isolation**: Code compilation happens in isolated jobs to prevent crashing the Manager.
 - **Graceful Resumption**: On Manager restart, it reconciles with PostgreSQL to resume tracking in-flight jobs.
+
+## Testing
+
+The project uses extensive testing, spanning unit tests for components, and end-to-end integration tests:
+- **Unit Tests**: Found alongside source files (e.g., `_test.go`), focusing on individual behaviors like the splitter, watchdog, and handlers.
+- **E2E Tests** (`test/e2e_test.go`): Submits full jobs and monitors completion.
+- **Graph Benchmarks** (`test/graph_benchmark_test.go`): Verifies performance across intensive iteration tests.
+
+Run tests using `make test-coverage` to view the comprehensive test coverage report.
 
 ## API Reference
 

@@ -66,6 +66,15 @@ func (c *Client) Get(path string, v any) error {
 	return c.do(req, v)
 }
 
+// GetRaw performs an authenticated GET and returns the raw response body bytes.
+func (c *Client) GetRaw(path string) ([]byte, int, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("build request: %w", err)
+	}
+	return c.doRaw(req)
+}
+
 // Post performs an authenticated POST with a JSON body and decodes the response.
 func (c *Client) Post(path string, body any, v any) error {
 	data, err := json.Marshal(body)

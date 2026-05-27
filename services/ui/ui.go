@@ -101,10 +101,11 @@ func main() {
 	jobs.Get("/:id/output", jobHandler.GetJobOutput)
 	jobs.Get("/:id/progress", jobHandler.GetJobProgress)
 
-	// File uploads (accessible by any authenticated user).
+	// File downloads (accessible by any authenticated user).
 	files := api.Group("/files", rbac.RequireAnyRole("user", "admin"))
 	files.Post("/input", fileHandler.UploadInput)
 	files.Post("/code", fileHandler.UploadCode)
+	files.Get("/download/*", fileHandler.DownloadFile)
 
 	// Admin routes — admin role required.
 	admin := api.Group("/admin", rbac.RequireAdmin())
