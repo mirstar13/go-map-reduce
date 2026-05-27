@@ -6,8 +6,8 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 
 | Document | Description |
 |----------|-------------|
-| [Design Document (PDF)](docs/design-document.pdf) | System design, technology choices, UML diagrams |
-| [Architecture & UML](docs/architecture.md) | Detailed architecture, sequence diagrams, state machines |
+| [Local Development](test/README.md) | Setup instructions for local development and testing |
+| [Examples](examples/README.md) | Sample MapReduce jobs (WordCount, Inverted Index) |
 | [Word Count Example](examples/wordcount/) | Classic MapReduce word frequency counter |
 | [Inverted Index Example](examples/inverted-index/) | Build word-to-document index |
 
