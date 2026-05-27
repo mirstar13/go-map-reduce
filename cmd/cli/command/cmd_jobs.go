@@ -3,10 +3,12 @@ package command
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +31,7 @@ func init() {
 	jobsCmd.AddCommand(jobsSubmitCmd)
 	jobsCmd.AddCommand(jobsCancelCmd)
 	jobsCmd.AddCommand(jobsOutputCmd)
+	jobsCmd.AddCommand(jobsWatchCmd)
 }
 
 var jobsListCmd = &cobra.Command{
@@ -49,7 +52,7 @@ var jobsListCmd = &cobra.Command{
 		for _, j := range jobs {
 			fmt.Fprintf(tw, "%s\t%s\t%.0f\t%.0f\t%s\n",
 				strField(j, "job_id"),
-				strField(j, "status"),
+				colourStatus(strField(j, "status")),
 				numField(j, "num_mappers"),
 				numField(j, "num_reducers"),
 				fmtTime(strField(j, "submitted_at")),
@@ -97,6 +100,7 @@ var submitFlags struct {
 	numMappers  int
 	numReducers int
 	format      string
+	auto        bool
 }
 
 var jobsSubmitCmd = &cobra.Command{
@@ -126,6 +130,7 @@ func init() {
 	jobsSubmitCmd.Flags().IntVar(&submitFlags.numMappers, "mappers", 4, "Number of map tasks")
 	jobsSubmitCmd.Flags().IntVar(&submitFlags.numReducers, "reducers", 2, "Number of reduce tasks")
 	jobsSubmitCmd.Flags().StringVar(&submitFlags.format, "format", "jsonl", "Input format: jsonl or text")
+	jobsSubmitCmd.Flags().BoolVar(&submitFlags.auto, "auto", false, "Automatically set mapper/reducer counts based on input size")
 	_ = jobsSubmitCmd.MarkFlagRequired("input")
 	_ = jobsSubmitCmd.MarkFlagRequired("mapper")
 	_ = jobsSubmitCmd.MarkFlagRequired("reducer")
@@ -136,37 +141,79 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 
 	// Validate local files exist before hitting the server.
 	for _, f := range []string{submitFlags.input, submitFlags.mapper, submitFlags.reducer} {
-		if _, err := os.Stat(f); err != nil {
+		fi, err := os.Stat(f)
+		if err != nil {
 			return fmt.Errorf("file not found: %s", f)
+		}
+
+		// Calculate auto-scaling if enabled.
+		if f == submitFlags.input && submitFlags.auto {
+			sizeMB := float64(fi.Size()) / (1024 * 1024)
+			submitFlags.numMappers = int(math.Ceil(sizeMB / float64(cfg.MapperThresholdMB)))
+			if submitFlags.numMappers < 1 {
+				submitFlags.numMappers = 1
+			}
+			submitFlags.numReducers = submitFlags.numMappers / 2
+			if submitFlags.numReducers < 1 {
+				submitFlags.numReducers = 1
+			}
+			fmt.Printf("Auto-scaling: using %d mappers and %d reducers for %.2f MB input (threshold: %d MB)\n",
+				submitFlags.numMappers, submitFlags.numReducers, sizeMB, cfg.MapperThresholdMB)
 		}
 	}
 
+	// Helper to upload a file with a progress bar.
+	uploadWithProgress := func(endpoint, localPath, description string, resp any) error {
+		fi, err := os.Stat(localPath)
+		if err != nil {
+			return err
+		}
+		bar := progressbar.NewOptions64(fi.Size(),
+			progressbar.OptionSetDescription(description),
+			progressbar.OptionSetWidth(30),
+			progressbar.OptionShowBytes(true),
+			progressbar.OptionShowCount(),
+			progressbar.OptionOnCompletion(func() { fmt.Println() }),
+			progressbar.OptionSetTheme(progressbar.Theme{
+				Saucer:        "█",
+				SaucerHead:    "█",
+				SaucerPadding: "░",
+				BarStart:      "[",
+				BarEnd:        "]",
+			}),
+		)
+		if err := c.UploadFileWithProgress(endpoint, localPath, resp, func(n int64) {
+			bar.Add64(n) //nolint:errcheck
+		}); err != nil {
+			return err
+		}
+		bar.Finish() //nolint:errcheck
+		return nil
+	}
+
 	// Step 1: upload input data.
-	fmt.Printf("Uploading input file %s...\n", submitFlags.input)
 	var inputResp struct {
 		Path string `json:"path"`
 	}
-	if err := c.UploadFile("/files/input", submitFlags.input, &inputResp); err != nil {
+	if err := uploadWithProgress("/files/input", submitFlags.input, "Uploading input  ", &inputResp); err != nil {
 		return fmt.Errorf("upload input: %w", err)
 	}
 	fmt.Printf("  → %s\n", inputResp.Path)
 
 	// Step 2: upload mapper.
-	fmt.Printf("Uploading mapper %s...\n", submitFlags.mapper)
 	var mapperResp struct {
 		Path string `json:"path"`
 	}
-	if err := c.UploadFile("/files/code", submitFlags.mapper, &mapperResp); err != nil {
+	if err := uploadWithProgress("/files/code", submitFlags.mapper, "Uploading mapper ", &mapperResp); err != nil {
 		return fmt.Errorf("upload mapper: %w", err)
 	}
 	fmt.Printf("  → %s\n", mapperResp.Path)
 
 	// Step 3: upload reducer.
-	fmt.Printf("Uploading reducer %s...\n", submitFlags.reducer)
 	var reducerResp struct {
 		Path string `json:"path"`
 	}
-	if err := c.UploadFile("/files/code", submitFlags.reducer, &reducerResp); err != nil {
+	if err := uploadWithProgress("/files/code", submitFlags.reducer, "Uploading reducer", &reducerResp); err != nil {
 		return fmt.Errorf("upload reducer: %w", err)
 	}
 	fmt.Printf("  → %s\n", reducerResp.Path)
@@ -190,7 +237,7 @@ func runSubmit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Job submitted successfully.\n")
 	fmt.Printf("  Job ID : %s\n", jobID)
 	fmt.Printf("  Status : %s\n", strField(job, "status"))
-	fmt.Printf("\nTrack progress with:\n  mapreduce jobs get %s\n", jobID)
+	fmt.Printf("\nTrack progress with:\n  mapreduce jobs watch %s\n", jobID)
 	return nil
 }
 
@@ -248,6 +295,144 @@ mc (MinIO Client) tool:
 	},
 }
 
+var jobsWatchCmd = &cobra.Command{
+	Use:   "watch <job-id>",
+	Short: "Watch a job's progress in real-time",
+	Long: `Watch a MapReduce job and display live progress bars.
+
+The command polls the server every 2 seconds and shows:
+  - Current job phase (BUILDING → SPLITTING → MAP → REDUCE → DONE)
+  - Map task completion progress bar
+  - Reduce task completion progress bar
+  - Elapsed time
+
+Exits automatically when the job reaches a terminal state.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runWatch,
+}
+
+// taskProgressInfo mirrors the server's progress response.
+type taskProgressInfo struct {
+	Completed int64 `json:"completed"`
+	Failed    int64 `json:"failed"`
+	Total     int64 `json:"total"`
+}
+
+type progressInfo struct {
+	JobID          string            `json:"job_id"`
+	Status         string            `json:"status"`
+	NumMappers     int32             `json:"num_mappers"`
+	NumReducers    int32             `json:"num_reducers"`
+	MapProgress    *taskProgressInfo `json:"map_progress"`
+	ReduceProgress *taskProgressInfo `json:"reduce_progress"`
+}
+
+func runWatch(cmd *cobra.Command, args []string) error {
+	c := newClient()
+	jobID := args[0]
+	start := time.Now()
+
+	var (
+		mapBar     *progressbar.ProgressBar
+		reduceBar  *progressbar.ProgressBar
+		lastStatus string
+	)
+
+	for {
+		var progress progressInfo
+		if err := c.Get("/jobs/"+jobID+"/progress", &progress); err != nil {
+			return fmt.Errorf("get progress: %w", err)
+		}
+
+		elapsed := time.Since(start).Truncate(time.Second)
+
+		// Print status header on phase change.
+		if progress.Status != lastStatus {
+			if lastStatus != "" {
+				fmt.Println() // blank line between phases
+			}
+			fmt.Printf("\n⏱  Elapsed: %s  |  Phase: %s\n", elapsed, colourStatus(progress.Status))
+			lastStatus = progress.Status
+
+			// Create map bar when entering MAP_PHASE.
+			if progress.Status == "MAP_PHASE" && mapBar == nil && progress.MapProgress != nil && progress.MapProgress.Total > 0 {
+				mapBar = newTaskBar("  Map tasks   ", progress.MapProgress.Total)
+			}
+
+			// Create reduce bar when entering REDUCE_PHASE.
+			if progress.Status == "REDUCE_PHASE" && reduceBar == nil {
+				// Finish the map bar if it wasn't already.
+				if mapBar != nil {
+					mapBar.Finish() //nolint:errcheck
+				}
+				if progress.ReduceProgress != nil && progress.ReduceProgress.Total > 0 {
+					reduceBar = newTaskBar("  Reduce tasks", progress.ReduceProgress.Total)
+				}
+			}
+		}
+
+		// Update map progress bar.
+		if mapBar != nil && progress.MapProgress != nil {
+			done := progress.MapProgress.Completed + progress.MapProgress.Failed
+			mapBar.Set64(done) //nolint:errcheck
+		}
+
+		// Update reduce progress bar.
+		if reduceBar != nil && progress.ReduceProgress != nil {
+			done := progress.ReduceProgress.Completed + progress.ReduceProgress.Failed
+			reduceBar.Set64(done) //nolint:errcheck
+		}
+
+		// Check for terminal state.
+		if isTerminalStatus(progress.Status) {
+			if mapBar != nil {
+				mapBar.Finish() //nolint:errcheck
+			}
+			if reduceBar != nil {
+				reduceBar.Finish() //nolint:errcheck
+			}
+			fmt.Printf("\n⏱  Elapsed: %s  |  Final: %s\n", elapsed, colourStatus(progress.Status))
+
+			if progress.Status == "FAILED" {
+				// Fetch full job details for error message.
+				var job map[string]interface{}
+				if err := c.Get("/jobs/"+jobID, &job); err == nil {
+					if msg := strField(job, "error_message"); msg != "" {
+						fmt.Printf("  Error: %s\n", msg)
+					}
+				}
+			}
+			return nil
+		}
+
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func newTaskBar(description string, total int64) *progressbar.ProgressBar {
+	return progressbar.NewOptions64(total,
+		progressbar.OptionSetDescription(description),
+		progressbar.OptionSetWidth(30),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() { fmt.Println() }),
+		progressbar.OptionSetTheme(progressbar.Theme{
+			Saucer:        "█",
+			SaucerHead:    "█",
+			SaucerPadding: "░",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}),
+	)
+}
+
+func isTerminalStatus(s string) bool {
+	switch strings.ToUpper(s) {
+	case "COMPLETED", "FAILED", "CANCELLED":
+		return true
+	}
+	return false
+}
+
 func strField(m map[string]interface{}, key string) string {
 	v, ok := m[key]
 	if !ok || v == nil {
@@ -286,7 +471,7 @@ func statusColour(s string) string {
 		return "\033[31m" + s + "\033[0m" // red
 	case "CANCELLED":
 		return "\033[33m" + s + "\033[0m" // yellow
-	case "MAP_PHASE", "REDUCE_PHASE", "SPLITTING":
+	case "MAP_PHASE", "REDUCE_PHASE", "SPLITTING", "BUILDING":
 		return "\033[36m" + s + "\033[0m" // cyan
 	default:
 		return s

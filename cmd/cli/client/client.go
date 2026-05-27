@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 )
 
 // Client is a thin wrapper around http.Client that handles auth and errors.
@@ -25,7 +25,24 @@ func New(baseURL, token string) *Client {
 		baseURL: baseURL,
 		token:   token,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			// Large uploads can take much longer than 60s.
+			// Timeouts should ideally be handled via context.
+			Timeout: 0,
+		},
+	}
+}
+
+// NewInsecure creates a Client that skips TLS certificate verification.
+func NewInsecure(baseURL, token string) *Client {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	return &Client{
+		baseURL: baseURL,
+		token:   token,
+		httpClient: &http.Client{
+			Timeout:   0,
+			Transport: tr,
 		},
 	}
 }
@@ -86,32 +103,67 @@ func (c *Client) Delete(path string, v any) error {
 	return c.do(req, v)
 }
 
-// UploadFile performs a multipart POST to upload a file from disk.
-// Returns the JSON response decoded into v.
+// progressReader wraps an io.Reader and calls onProgress after each Read.
+type progressReader struct {
+	reader     io.Reader
+	onProgress func(n int64)
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	if n > 0 && pr.onProgress != nil {
+		pr.onProgress(int64(n))
+	}
+	return n, err
+}
+
+// UploadFile performs a multipart POST to upload a file from disk using streaming.
+// This prevents loading the entire file into memory.
 func (c *Client) UploadFile(path, localPath string, v any) error {
+	return c.UploadFileWithProgress(path, localPath, v, nil)
+}
+
+// UploadFileWithProgress is like UploadFile but invokes onProgress with the
+// number of bytes just read from disk on every chunk. Callers can use this to
+// drive a progress bar.
+func (c *Client) UploadFileWithProgress(path, localPath string, v any, onProgress func(n int64)) error {
 	f, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", localPath, err)
 	}
-	defer f.Close()
+	// We don't defer close here because we close it in the goroutine
 
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
+	// Create a pipe to stream the multipart data
+	pr, pw := io.Pipe()
+	w := multipart.NewWriter(pw)
 
-	part, err := w.CreateFormFile("file", filepath.Base(localPath))
-	if err != nil {
-		return fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := io.Copy(part, f); err != nil {
-		return fmt.Errorf("copy file: %w", err)
-	}
-	w.Close()
+	go func() {
+		defer pw.Close()
+		defer f.Close()
 
-	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, &buf)
+		part, err := w.CreateFormFile("file", filepath.Base(localPath))
+		if err != nil {
+			return
+		}
+
+		var reader io.Reader = f
+		if onProgress != nil {
+			reader = &progressReader{reader: f, onProgress: onProgress}
+		}
+
+		if _, err := io.Copy(part, reader); err != nil {
+			return
+		}
+		w.Close()
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, c.baseURL+path, pr)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	// Execute the request. The pw.Close() in the goroutine will signal the end of the body.
 	return c.do(req, v)
 }
 

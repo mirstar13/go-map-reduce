@@ -49,6 +49,15 @@ Examples:
 		if err != nil {
 			return err
 		}
+
+		// Environment variable override for mapper threshold.
+		if envVal := os.Getenv("MAPREDUCE_MAPPER_THRESHOLD_MB"); envVal != "" {
+			var threshold int
+			if _, err := fmt.Sscanf(envVal, "%d", &threshold); err == nil && threshold > 0 {
+				cfg.MapperThresholdMB = threshold
+			}
+		}
+
 		// --server flag overrides config file.
 		if flagServer != "" {
 			cfg.ServerURL = flagServer
