@@ -32,6 +32,7 @@ func init() {
 	jobsCmd.AddCommand(jobsCancelCmd)
 	jobsCmd.AddCommand(jobsOutputCmd)
 	jobsCmd.AddCommand(jobsWatchCmd)
+	jobsCmd.AddCommand(jobsDeleteCmd)
 }
 
 var jobsListCmd = &cobra.Command{
@@ -252,6 +253,20 @@ var jobsCancelCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Job %s cancelled.\n", args[0])
+		return nil
+	},
+}
+
+var jobsDeleteCmd = &cobra.Command{
+	Use:   "delete <job-id>",
+	Short: "Delete a job and its associated resources",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c := newClient()
+		if err := c.Delete("/jobs/"+args[0], nil); err != nil {
+			return err
+		}
+		fmt.Printf("Job %s deleted.\n", args[0])
 		return nil
 	},
 }
