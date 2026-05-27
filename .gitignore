@@ -28,11 +28,23 @@ go.work.sum
 dev
 *dev*
 .agents
+.c*
+c*.md
 
 .g*
+.github/*
 
 build
 
 *.out
 coverage
 prod*
+
+GE*.md
+
+examples/nasa-access-logs
+examples/googleplus
+examples/sx-stackoverflow
+
+AG*.md
+docs/

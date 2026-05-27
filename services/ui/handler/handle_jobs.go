@@ -98,13 +98,7 @@ func (h *JobHandler) SubmitJob(c fiber.Ctx) error {
 	return c.Status(status).Send(raw)
 }
 
-// CancelJob godoc
-//
-//	DELETE /jobs/:id
-//	Requires: user or admin role.
-//
-// Asks the Manager to cancel a job. The Manager enforces ownership: regular
-// users can only cancel their own jobs.
+// CancelJob asks the Manager to cancel a job.
 func (h *JobHandler) CancelJob(c fiber.Ctx) error {
 	jobID := c.Params("id")
 	if jobID == "" {
@@ -122,6 +116,25 @@ func (h *JobHandler) CancelJob(c fiber.Ctx) error {
 	return c.Status(status).Send(raw)
 }
 
+// DeleteJob asks the Manager to delete a job.
+func (h *JobHandler) DeleteJob(c fiber.Ctx) error {
+	jobID := c.Params("id")
+	if jobID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "job id is required"})
+	}
+
+	id := auth.GetIdentity(c)
+	raw, status, err := h.manager.DeleteJob(c.Context(), jobID, id.Subject, id.Email, rolesHeader(id))
+	if err != nil {
+		h.log.Error("delete job: manager error", zap.String("job_id", jobID), zap.Error(err))
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "upstream error"})
+	}
+
+	h.log.Info("job delete requested", zap.String("job_id", jobID), zap.String("user", id.Subject))
+	return c.Status(status).Send(raw)
+}
+
+
 // GetJobOutput godoc
 //
 //	GET /jobs/:id/output
@@ -138,6 +151,21 @@ func (h *JobHandler) GetJobOutput(c fiber.Ctx) error {
 	raw, status, err := h.manager.GetJobOutput(c.Context(), jobID, id.Subject, id.Email, rolesHeader(id))
 	if err != nil {
 		h.log.Error("get job output: manager error", zap.String("job_id", jobID), zap.Error(err))
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "upstream error"})
+	}
+	return c.Status(status).Send(raw)
+}
+
+// GetJobProgress - GET /jobs/:id/progress
+func (h *JobHandler) GetJobProgress(c fiber.Ctx) error {
+	jobID := c.Params("id")
+	if jobID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "job id is required"})
+	}
+	id := auth.GetIdentity(c)
+	raw, status, err := h.manager.GetJobProgress(c.Context(), jobID, id.Subject, id.Email, rolesHeader(id))
+	if err != nil {
+		h.log.Error("get job progress: manager error", zap.String("job_id", jobID), zap.Error(err))
 		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{"error": "upstream error"})
 	}
 	return c.Status(status).Send(raw)

@@ -62,9 +62,10 @@ func main() {
 			}
 			return c.Status(code).JSON(fiber.Map{"error": msg})
 		},
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		BodyLimit:    32 * 1024 * 1024,
+		ReadTimeout:       10 * time.Minute,
+		WriteTimeout:      10 * time.Minute,
+		BodyLimit:         cfg.MaxBodySizeMB * 1024 * 1024,
+		StreamRequestBody: true,
 	})
 
 	app.Use(recover.New())
@@ -95,8 +96,10 @@ func main() {
 	jobs.Get("/", jobHandler.ListJobs)
 	jobs.Post("/", jobHandler.SubmitJob)
 	jobs.Get("/:id", jobHandler.GetJob)
+	jobs.Delete("/:id", jobHandler.DeleteJob)
 	jobs.Post("/:id/cancel", jobHandler.CancelJob)
 	jobs.Get("/:id/output", jobHandler.GetJobOutput)
+	jobs.Get("/:id/progress", jobHandler.GetJobProgress)
 
 	// File uploads (accessible by any authenticated user).
 	files := api.Group("/files", rbac.RequireAnyRole("user", "admin"))

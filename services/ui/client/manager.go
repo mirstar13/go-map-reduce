@@ -90,6 +90,16 @@ func (m *ManagerClient) CancelJob(
 	return m.do(ctx, http.MethodPost, url, userID, userEmail, userRoles, nil)
 }
 
+// DeleteJob asks the Manager to delete a job.
+func (m *ManagerClient) DeleteJob(
+	ctx context.Context,
+	jobID, userID, userEmail, userRoles string,
+) (json.RawMessage, int, error) {
+	url := m.baseURL() + "/jobs/" + jobID
+	return m.do(ctx, http.MethodDelete, url, userID, userEmail, userRoles, nil)
+}
+
+
 // AdminListJobs returns all jobs regardless of owner (admin only).
 func (m *ManagerClient) AdminListJobs(
 	ctx context.Context,
@@ -105,6 +115,15 @@ func (m *ManagerClient) GetJobOutput(
 	jobID, userID, userEmail, userRoles string,
 ) (json.RawMessage, int, error) {
 	url := m.baseURL() + "/jobs/" + jobID + "/output"
+	return m.do(ctx, http.MethodGet, url, userID, userEmail, userRoles, nil)
+}
+
+// GetJobProgress returns the progress of a job.
+func (m *ManagerClient) GetJobProgress(
+	ctx context.Context,
+	jobID, userID, userEmail, userRoles string,
+) (json.RawMessage, int, error) {
+	url := m.baseURL() + "/jobs/" + jobID + "/progress"
 	return m.do(ctx, http.MethodGet, url, userID, userEmail, userRoles, nil)
 }
 

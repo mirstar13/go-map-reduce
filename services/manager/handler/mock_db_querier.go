@@ -45,6 +45,16 @@ type mockQuerier struct {
 	markReduceTaskFailedFn         func(ctx context.Context, taskID uuid.UUID) error
 	markReduceTaskRunningFn        func(ctx context.Context, arg db.MarkReduceTaskRunningParams) error
 	updateJobStatusFn              func(ctx context.Context, arg db.UpdateJobStatusParams) error
+	updateJobMapperPathFn          func(ctx context.Context, arg db.UpdateJobMapperPathParams) error
+	updateJobReducerPathFn         func(ctx context.Context, arg db.UpdateJobReducerPathParams) error
+	getMapTaskJobNamesFn           func(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error)
+	getReduceTaskJobNamesFn        func(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error)
+	deleteJobFn                    func(ctx context.Context, jobID uuid.UUID) error
+	getCachedPluginFn              func(ctx context.Context, sourceHash string) (db.PluginCache, error)
+	upsertCachedPluginFn           func(ctx context.Context, arg db.UpsertCachedPluginParams) error
+	updatePluginLastUsedFn         func(ctx context.Context, sourceHash string) error
+	listStalePluginsFn             func(ctx context.Context, dollar1 sql.NullString) ([]db.PluginCache, error)
+	deleteCachedPluginFn           func(ctx context.Context, sourceHash string) error
 }
 
 // compile-time assertion
@@ -280,3 +290,76 @@ func (m *mockQuerier) UpdateJobStatus(ctx context.Context, arg db.UpdateJobStatu
 	}
 	panic("UpdateJobStatus: not implemented")
 }
+
+func (m *mockQuerier) UpdateJobMapperPath(ctx context.Context, arg db.UpdateJobMapperPathParams) error {
+	if m.updateJobMapperPathFn != nil {
+		return m.updateJobMapperPathFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) UpdateJobReducerPath(ctx context.Context, arg db.UpdateJobReducerPathParams) error {
+	if m.updateJobReducerPathFn != nil {
+		return m.updateJobReducerPathFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) GetMapTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error) {
+	if m.getMapTaskJobNamesFn != nil {
+		return m.getMapTaskJobNamesFn(ctx, jobID)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) GetReduceTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error) {
+	if m.getReduceTaskJobNamesFn != nil {
+		return m.getReduceTaskJobNamesFn(ctx, jobID)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) DeleteJob(ctx context.Context, jobID uuid.UUID) error {
+	if m.deleteJobFn != nil {
+		return m.deleteJobFn(ctx, jobID)
+	}
+	return nil
+}
+
+func (m *mockQuerier) GetCachedPlugin(ctx context.Context, sourceHash string) (db.PluginCache, error) {
+	if m.getCachedPluginFn != nil {
+		return m.getCachedPluginFn(ctx, sourceHash)
+	}
+	return db.PluginCache{}, sql.ErrNoRows
+}
+
+func (m *mockQuerier) UpsertCachedPlugin(ctx context.Context, arg db.UpsertCachedPluginParams) error {
+	if m.upsertCachedPluginFn != nil {
+		return m.upsertCachedPluginFn(ctx, arg)
+	}
+	return nil
+}
+
+func (m *mockQuerier) UpdatePluginLastUsed(ctx context.Context, sourceHash string) error {
+	if m.updatePluginLastUsedFn != nil {
+		return m.updatePluginLastUsedFn(ctx, sourceHash)
+	}
+	return nil
+}
+
+func (m *mockQuerier) ListStalePlugins(ctx context.Context, dollar1 sql.NullString) ([]db.PluginCache, error) {
+	if m.listStalePluginsFn != nil {
+		return m.listStalePluginsFn(ctx, dollar1)
+	}
+	return nil, nil
+}
+
+func (m *mockQuerier) DeleteCachedPlugin(ctx context.Context, sourceHash string) error {
+	if m.deleteCachedPluginFn != nil {
+		return m.deleteCachedPluginFn(ctx, sourceHash)
+	}
+	return nil
+}
+
+
+

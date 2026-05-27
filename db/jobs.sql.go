@@ -123,6 +123,16 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 	return i, err
 }
 
+const deleteJob = `-- name: DeleteJob :exec
+DELETE FROM jobs
+WHERE job_id = $1
+`
+
+func (q *Queries) DeleteJob(ctx context.Context, jobID uuid.UUID) error {
+	_, err := q.exec(ctx, q.deleteJobStmt, deleteJob, jobID)
+	return err
+}
+
 const failJob = `-- name: FailJob :exec
 UPDATE jobs
 SET
@@ -306,17 +316,49 @@ func (q *Queries) GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job,
 	return items, nil
 }
 
+const updateJobMapperPath = `-- name: UpdateJobMapperPath :exec
+UPDATE jobs
+SET mapper_path = $2
+WHERE job_id = $1
+`
+
+type UpdateJobMapperPathParams struct {
+	JobID      uuid.UUID `json:"job_id"`
+	MapperPath string    `json:"mapper_path"`
+}
+
+func (q *Queries) UpdateJobMapperPath(ctx context.Context, arg UpdateJobMapperPathParams) error {
+	_, err := q.exec(ctx, q.updateJobMapperPathStmt, updateJobMapperPath, arg.JobID, arg.MapperPath)
+	return err
+}
+
+const updateJobReducerPath = `-- name: UpdateJobReducerPath :exec
+UPDATE jobs
+SET reducer_path = $2
+WHERE job_id = $1
+`
+
+type UpdateJobReducerPathParams struct {
+	JobID       uuid.UUID `json:"job_id"`
+	ReducerPath string    `json:"reducer_path"`
+}
+
+func (q *Queries) UpdateJobReducerPath(ctx context.Context, arg UpdateJobReducerPathParams) error {
+	_, err := q.exec(ctx, q.updateJobReducerPathStmt, updateJobReducerPath, arg.JobID, arg.ReducerPath)
+	return err
+}
+
 const updateJobStatus = `-- name: UpdateJobStatus :exec
 UPDATE jobs
 SET
     status       = $2,
     started_at   = CASE
-                     WHEN $2 = 'MAP_PHASE' AND started_at IS NULL
+                     WHEN $2::varchar IN ('BUILDING', 'MAP_PHASE') AND started_at IS NULL
                      THEN NOW()
                      ELSE started_at
                    END,
     completed_at = CASE
-                     WHEN $2 IN ('COMPLETED', 'FAILED', 'CANCELLED')
+                     WHEN $2::varchar IN ('COMPLETED', 'FAILED', 'CANCELLED')
                      THEN NOW()
                      ELSE completed_at
                    END

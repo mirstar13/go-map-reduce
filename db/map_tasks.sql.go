@@ -112,6 +112,36 @@ func (q *Queries) GetMapTask(ctx context.Context, taskID uuid.UUID) (MapTask, er
 	return i, err
 }
 
+const getMapTaskJobNames = `-- name: GetMapTaskJobNames :many
+SELECT DISTINCT k8s_job_name
+FROM map_tasks
+WHERE job_id = $1
+  AND k8s_job_name IS NOT NULL
+`
+
+func (q *Queries) GetMapTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error) {
+	rows, err := q.query(ctx, q.getMapTaskJobNamesStmt, getMapTaskJobNames, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []sql.NullString{}
+	for rows.Next() {
+		var k8s_job_name sql.NullString
+		if err := rows.Scan(&k8s_job_name); err != nil {
+			return nil, err
+		}
+		items = append(items, k8s_job_name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getMapTaskOutputLocations = `-- name: GetMapTaskOutputLocations :many
 SELECT task_index, output_locations
 FROM map_tasks

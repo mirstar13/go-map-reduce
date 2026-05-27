@@ -17,6 +17,8 @@ import (
 	"github.com/mirstar13/go-map-reduce/db"
 	"github.com/mirstar13/go-map-reduce/pkg/middleware/auth"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
+	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
+	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +26,25 @@ import (
 )
 
 var testCfg = &config.Config{MyReplicaName: "manager-0"}
+
+type mockDispatcher struct{}
+
+func (m *mockDispatcher) DispatchMap(ctx context.Context, spec dispatcher.MapTaskSpec) (string, error) {
+	return "", nil
+}
+func (m *mockDispatcher) DispatchReduce(ctx context.Context, spec dispatcher.ReduceTaskSpec) (string, error) {
+	return "", nil
+}
+func (m *mockDispatcher) DispatchBuild(ctx context.Context, spec dispatcher.BuildTaskSpec) (string, error) {
+	return "", nil
+}
+func (m *mockDispatcher) DeleteJob(ctx context.Context, jobName string) error {
+	return nil
+}
+
+func createDummyDispatcher(t *testing.T) interfaces.Dispatcher {
+	return &mockDispatcher{}
+}
 
 // withIdentity injects an *auth.Identity into the request context,
 // simulating what auth.New / auth.NewInternal would do in production.
@@ -41,7 +62,7 @@ func noopLaunch(_ db.Job) {}
 // middleware so handlers can call auth.GetIdentity.
 func newJobApp(t *testing.T, q db.Querier, id *auth.Identity) *fiber.App {
 	t.Helper()
-	h := NewJobHandler(q, supervisor.NewRegistry(), nil, nil, testCfg, zap.NewNop(), noopLaunch)
+	h := NewJobHandler(q, supervisor.NewRegistry(), nil, createDummyDispatcher(t), testCfg, zap.NewNop(), noopLaunch)
 	app := fiber.New()
 	app.Use(withIdentity(id))
 	app.Post("/jobs", h.SubmitJob)
@@ -50,13 +71,14 @@ func newJobApp(t *testing.T, q db.Querier, id *auth.Identity) *fiber.App {
 	app.Post("/jobs/:id/cancel", h.CancelJob)
 	app.Get("/jobs/:id/output", h.GetJobOutput)
 	app.Get("/admin/jobs", h.AdminListJobs)
+	app.Delete("/jobs/:id", h.DeleteJob)
 	return app
 }
 
 // newJobAppNoIdentity wires the app without any identity (unauthenticated).
 func newJobAppNoIdentity(t *testing.T, q db.Querier) *fiber.App {
 	t.Helper()
-	h := NewJobHandler(q, supervisor.NewRegistry(), nil, nil, testCfg, zap.NewNop(), noopLaunch)
+	h := NewJobHandler(q, supervisor.NewRegistry(), nil, createDummyDispatcher(t), testCfg, zap.NewNop(), noopLaunch)
 	app := fiber.New()
 	app.Post("/jobs", h.SubmitJob)
 	app.Get("/jobs", h.ListJobs)
@@ -714,4 +736,85 @@ func TestAssertAccess_NoIdentity(t *testing.T) {
 	resp, err := app.Test(req)
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+}
+
+
+func TestDeleteJob_InvalidID(t *testing.T) {
+	id := &auth.Identity{Subject: "user-1", Roles: []string{"user"}}
+	app := newJobApp(t, &mockQuerier{}, id)
+	resp := doRequest(t, app, http.MethodDelete, "/jobs/bad-uuid", nil)
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestDeleteJob_NotFound(t *testing.T) {
+	id := &auth.Identity{Subject: "user-1", Roles: []string{"user"}}
+	q := &mockQuerier{
+		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) {
+			return db.Job{}, sql.ErrNoRows
+		},
+	}
+	app := newJobApp(t, q, id)
+	resp := doRequest(t, app, http.MethodDelete, "/jobs/"+uuid.New().String(), nil)
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestDeleteJob_AccessDenied(t *testing.T) {
+	id := &auth.Identity{Subject: "user-alice", Roles: []string{"user"}}
+	othersJob := sampleJob("user-bob")
+
+	q := &mockQuerier{
+		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) {
+			return othersJob, nil
+		},
+	}
+	app := newJobApp(t, q, id)
+	resp := doRequest(t, app, http.MethodDelete, "/jobs/"+othersJob.JobID.String(), nil)
+	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+}
+
+func TestDeleteJob_Success_Owner(t *testing.T) {
+	userID := "user-alice"
+	id := &auth.Identity{Subject: userID, Roles: []string{"user"}}
+	job := sampleJob(userID)
+	deleteCalled := false
+
+	q := &mockQuerier{
+		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) {
+			return job, nil
+		},
+		deleteJobFn: func(_ context.Context, jid uuid.UUID) error {
+			deleteCalled = true
+			assert.Equal(t, job.JobID, jid)
+			return nil
+		},
+		getMapTaskJobNamesFn: func(_ context.Context, _ uuid.UUID) ([]sql.NullString, error) {
+			return nil, nil
+		},
+		getReduceTaskJobNamesFn: func(_ context.Context, _ uuid.UUID) ([]sql.NullString, error) {
+			return nil, nil
+		},
+	}
+	app := newJobApp(t, q, id)
+	resp := doRequest(t, app, http.MethodDelete, "/jobs/"+job.JobID.String(), nil)
+
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.True(t, deleteCalled)
+}
+
+func TestDeleteJob_DBError(t *testing.T) {
+	userID := "user-alice"
+	id := &auth.Identity{Subject: userID, Roles: []string{"user"}}
+	job := sampleJob(userID)
+
+	q := &mockQuerier{
+		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) {
+			return job, nil
+		},
+		deleteJobFn: func(_ context.Context, _ uuid.UUID) error {
+			return errors.New("db failure")
+		},
+	}
+	app := newJobApp(t, q, id)
+	resp := doRequest(t, app, http.MethodDelete, "/jobs/"+job.JobID.String(), nil)
+	assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 }

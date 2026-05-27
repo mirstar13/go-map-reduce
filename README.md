@@ -6,39 +6,48 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 
 | Document | Description |
 |----------|-------------|
-| [Design Document (PDF)](docs/design-document.pdf) | System design, technology choices, UML diagrams |
-| [Architecture & UML](docs/architecture.md) | Detailed architecture, sequence diagrams, state machines |
+| [Local Development](test/README.md) | Setup instructions for local development and testing |
+| [Examples](examples/README.md) | Sample MapReduce jobs (WordCount, Inverted Index) |
 | [Word Count Example](examples/wordcount/) | Classic MapReduce word frequency counter |
 | [Inverted Index Example](examples/inverted-index/) | Build word-to-document index |
 
 ## Features
 
-- **Distributed Execution**: Scale to thousands of parallel workers via Kubernetes Jobs
-- **Fault Tolerance**: Automatic task retry with watchdog-based failure detection
-- **Authentication**: Full SSO via Keycloak with JWT tokens and RBAC
-- **Flexible Input/Output**: JSON Lines and plain text formats with byte-range splitting
-- **Object Storage**: MinIO-based storage for input, code, intermediate, and output files
-- **CLI & API**: Command-line interface and REST API for job management
-- **Go Plugins**: Type-safe mapper/reducer execution via HashiCorp go-plugin
+- **Distributed Execution**: Scale to thousands of parallel workers via Kubernetes Jobs.
+- **Fault Tolerance**: Automatic task retry with watchdog-based failure detection.
+- **Plugin Caching**: Automatically hashes and caches compiled Go plugin binaries in MinIO to skip redundant builds.
+- **Real-time Monitoring**: Interactive CLI `watch` command with live progress bars for all execution phases.
+- **Auto-scaling**: Intelligent mapper and reducer count selection based on input dataset size.
+- **Authentication**: Full SSO via Keycloak with JWT tokens and RBAC.
+- **Flexible Input/Output**: JSON Lines and plain text formats with byte-range splitting.
+- **Object Storage**: MinIO-based storage for input, code, intermediate, and output files.
+- **CLI & API**: Comprehensive command-line interface and REST API for job management.
+- **Go Plugins**: Type-safe mapper/reducer execution via HashiCorp `go-plugin`.
 
 ## Architecture
 
 ```
 ┌─────────────┐      ┌─────────────────┐       ┌──────────────────┐
-│   CLI       │────▶│   UI Service    │─────▶│  Manager Service │
+│   CLI       │────▶│   UI Service    |─────▶│  Manager Service │
 │  (mapreduce)│      │   (Gateway)     │       │  (Orchestrator)  │
 └─────────────┘      └─────────────────┘       └──────────────────┘
                             │                          │
                             ▼                          ▼
+                     ┌───────────────┐         ┌──────────────────┐
+                     │   Keycloak    │         │  Builder Service │
+                     │   (Auth)      │         │  (K8s Build Job) │
+                     └───────────────┘         └──────────────────┘
+                            │                          │
+                            ▼                          ▼
                      ┌───────────────┐         ┌───────────────┐
-                     │   Keycloak    │         │  Worker Pods  │
-                     │   (Auth)      │         │  (K8s Jobs)   │
+                     │  PostgreSQL   │◀──────▶│  Worker Pods  │
+                     │  (State DB)   │         │  (K8s Jobs)   │
                      └───────────────┘         └───────────────┘
                             │                          │
                             ▼                          ▼
                      ┌───────────────┐         ┌───────────────┐
-                     │  PostgreSQL   │◀─────▶│     MinIO     │
-                     │  (State DB)   │         │   (Storage)   │
+                     │     MinIO     │◀──────▶│     MinIO     │
+                     │ (Code/Cache)  │         │    (Data)     │
                      └───────────────┘         └───────────────┘
 ```
 
@@ -46,12 +55,13 @@ A distributed MapReduce implementation built in Go, designed to run on Kubernete
 
 | Service | Description | Kubernetes Resource |
 |---------|-------------|---------------------|
-| **UI Service** | Public API gateway with JWT validation | Deployment |
-| **Manager Service** | Job orchestration and worker scheduling | Deployment/StatefulSet |
-| **Workers** | Execute map/reduce tasks | batch/v1 Jobs |
-| **Keycloak** | Identity provider (OpenID Connect) | Deployment |
-| **PostgreSQL** | Persistent job/task state storage | StatefulSet |
-| **MinIO** | S3-compatible object storage | StatefulSet |
+| **UI Service** | Public API gateway with JWT validation and streaming upload support | Deployment |
+| **Manager Service** | Job orchestration, state management, and worker scheduling | StatefulSet |
+| **Builder Service** | Compiles Go source code into executable plugins | batch/v1 Job |
+| **Workers** | Execute map and reduce tasks using loaded plugins | batch/v1 Jobs |
+| **Keycloak** | Identity provider (OpenID Connect / OAuth 2.0) | Deployment |
+| **PostgreSQL** | Persistent job, task, and plugin cache storage | StatefulSet |
+| **MinIO** | S3-compatible storage for code, binaries, and datasets | StatefulSet |
 
 ## Quick Start
 
@@ -99,96 +109,97 @@ mapreduce login --server http://localhost:8081 --username alice
 
 ### Submit a Job
 
+The CLI supports automatic scaling of workers based on input size.
+
 ```bash
-# Submit a MapReduce job
+# Submit a MapReduce job with auto-scaling
 mapreduce jobs submit \
-  --input ./data/input.jsonl \
-  --mapper ./scripts/mapper.py \
-  --reducer ./scripts/reducer.py \
-  --mappers 4 \
-  --reducers 2 \
-  --format jsonl
+  --input   ./data/large_input.txt \
+  --mapper  ./examples/wordcount/mapper.go \
+  --reducer ./examples/wordcount/reducer.go \
+  --auto \
+  --format  text
 ```
 
 ### Monitor Jobs
 
 ```bash
+# Watch progress in real-time with progress bars
+mapreduce jobs watch <job-id>
+
 # List your jobs
 mapreduce jobs list
 
-# Get job details
+# Get detailed job status
 mapreduce jobs get <job-id>
 
 # Cancel a running job
 mapreduce jobs cancel <job-id>
 
-# Download output
-mapreduce jobs output <job-id>
+# Delete a job and its associated resources
+mapreduce jobs delete <job-id>
 ```
 
-### Admin Commands
+### Benchmarking
 
-Requires `admin` role in Keycloak.
+Automate multiple iterations of a job to measure performance and cluster stability.
 
 ```bash
-# List all users
-mapreduce admin users list
-
-# Create a new user
-mapreduce admin users create --username bob --email bob@example.com --password secret123
-
-# Assign admin role
-mapreduce admin users role <user-id> admin
-
-# Delete a user
-mapreduce admin users delete <user-id>
-
-# List all jobs (any owner)
-mapreduce admin jobs list
+# Run 5 iterations of wordcount
+go run cmd/benchmark-runner/main.go ./input.txt mapper.go reducer.go 5
 ```
 
 ## Writing Map/Reduce Functions
 
-Functions communicate via stdin/stdout and can be written in any language.
+Functions are written in Go and executed as plugins.
 
 ### Mapper
 
-Reads input records from stdin, emits `key\tvalue` pairs to stdout.
+```go
+package main
 
-```python
-#!/usr/bin/env python3
-# mapper.py - Word count mapper
-import sys
+import (
+    "strings"
+    "github.com/mirstar13/go-map-reduce/pkg/plugin"
+)
 
-for line in sys.stdin:
-    for word in line.strip().split():
-        print(f"{word.lower()}\t1")
+type MapperImpl struct{}
+
+func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
+    var records []plugin.Record
+    words := strings.Fields(value)
+    for _, word := range words {
+        records = append(records, plugin.Record{Key: word, Value: "1"})
+    }
+    return records, nil
+}
+
+var Mapper plugin.Mapper = &MapperImpl{}
 ```
 
 ### Reducer
 
-Reads sorted `key\tvalue` pairs from stdin, emits aggregated results.
+```go
+package main
 
-```python
-#!/usr/bin/env python3
-# reducer.py - Word count reducer
-import sys
-from itertools import groupby
+import (
+    "strconv"
+    "github.com/mirstar13/go-map-reduce/pkg/plugin"
+)
 
-def key_func(line):
-    return line.split('\t')[0]
+type ReducerImpl struct{}
 
-for key, group in groupby(sys.stdin, key_func):
-    count = sum(int(line.split('\t')[1]) for line in group)
-    print(f"{key}\t{count}")
+func (r *ReducerImpl) Reduce(key string, values []string) (string, error) {
+    count := 0
+    for _, val := range values {
+        c, _ := strconv.Atoi(val)
+        count += c
+    }
+    return strconv.Itoa(count), nil
+}
+
+var Reducer plugin.Reducer = &ReducerImpl{}
 ```
-
-### Input Formats
-
-| Format | Description | Example |
-|--------|-------------|---------|
-| `jsonl` | JSON Lines (one JSON object per line) | `{"user": "alice", "action": "click"}` |
-| `text` | Plain text (one record per line) | `Hello world` |
 
 ## Project Structure
 
@@ -196,172 +207,42 @@ for key, group in groupby(sys.stdin, key_func):
 .
 ├── cmd/
 │   ├── cli/              # Command-line interface
-│   │   ├── command/      # Cobra commands (jobs, admin, login)
-│   │   ├── client/       # HTTP client with auth
-│   │   └── config/       # CLI configuration
+│   ├── benchmark-runner/ # Automated performance testing tool
 │   └── migrate/          # Database migration tool
 ├── db/                   # Generated sqlc code
-├── manifests/            # Kubernetes manifests
-│   ├── 00_namespace.yml
-│   ├── 01_secrets.yml
-│   ├── 02_configmap.yml
-│   ├── 03_postgres.yml
-│   ├── 04_keycloak.yml
-│   ├── 05_minio.yml
-│   ├── 06_manager.yml
-│   ├── 07_ui.yml
-│   └── 08_ingress.yml
+├── examples/             # Sample Go plugins and graph algorithms
+├── manifests/            # Kubernetes manifests (Deployments, Services, etc.)
 ├── pkg/
-│   ├── jwks/             # JWKS key fetching/caching
-│   ├── logger/           # Structured logging (zap)
-│   └── middleware/
-│       ├── auth/         # JWT validation middleware
-│       └── rbac/         # Role-based access control
+│   ├── plugin/           # Plugin interface and RPC definitions
+│   ├── middleware/       # JWT and RBAC middleware
+│   └── logger/           # Structured logging (zap)
 ├── services/
 │   ├── manager/          # Job orchestration service
-│   │   ├── config/
-│   │   ├── dispatcher/   # K8s Job creation
-│   │   ├── handler/      # HTTP handlers
-│   │   ├── splitter/     # Input file splitting
-│   │   ├── supervisor/   # Job state machine
-│   │   └── watchdog/     # Stale task detection
-│   └── ui/               # API gateway service
-│       ├── client/       # Keycloak, MinIO, Manager clients
-│       ├── config/
-│       └── handler/
+│   ├── ui/               # API gateway service
+│   ├── builder/          # Plugin compilation service
+│   └── worker/           # Task execution service
 ├── sql/
-│   └── queries/          # SQL queries for sqlc
-├── Makefile
-├── go.mod
-└── sqlc.yml
+│   ├── queries/          # SQL queries for sqlc
+│   └── schema/           # Database schema migrations
+└── test/                 # E2E and integration tests
 ```
-
-## Development
-
-### Run Tests
-
-```bash
-# Run all tests
-go test ./...
-
-# With coverage report
-make test-coverage
-```
-
-### Generate Database Code
-
-```bash
-# After modifying sql/queries/*.sql
-sqlc generate
-```
-
-### Local Development
-
-```bash
-# Start dependencies (requires Docker Compose or running K8s services)
-# Then run services locally:
-
-# Terminal 1: Manager service
-cd services/manager && go run .
-
-# Terminal 2: UI service
-cd services/ui && go run .
-```
-
-## Configuration
-
-### Environment Variables
-
-#### UI Service
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | HTTP listen port | `8081` |
-| `MANAGER_URL` | Manager service URL | `http://manager:8080` |
-| `KEYCLOAK_URL` | Keycloak base URL | `http://keycloak:8080` |
-| `KEYCLOAK_REALM` | Keycloak realm name | `mapreduce` |
-| `KEYCLOAK_CLIENT_ID` | OAuth client ID | `mapreduce-cli` |
-| `MINIO_ENDPOINT` | MinIO endpoint | `minio:9000` |
-
-#### Manager Service
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | HTTP listen port | `8080` |
-| `POSTGRES_DSN` | PostgreSQL connection string | - |
-| `MY_REPLICA_NAME` | Pod identity for job affinity | hostname |
-| `WORKER_NAMESPACE` | Namespace for worker Jobs | `mapreduce` |
-| `WORKER_IMAGE` | Worker container image | `starpal/mapreduce-worker:latest` |
-| `TASK_TIMEOUT_SECONDS` | Task execution timeout | `300` |
-| `TASK_MAX_RETRIES` | Max retry attempts | `3` |
 
 ## Fault Tolerance
 
-### Worker Failure Recovery
-
-1. **Watchdog**: Scans every 30s for tasks running longer than timeout
-2. **Retry**: Failed tasks are retried up to 3 times
-3. **State Persistence**: All task state stored in PostgreSQL
-4. **Manager Recovery**: On restart, Manager resumes monitoring in-flight jobs
-
-### Testing Fault Tolerance
-
-```bash
-# Kill a worker pod
-kubectl delete pod -n mapreduce -l app=mapreduce-worker --wait=false
-
-# Watch the job recover
-mapreduce jobs get <job-id>
-```
+- **Watchdog**: Scans every 30s for tasks running longer than timeout.
+- **Retries**: Automatically reschedules failed tasks up to 3 times on different nodes.
+- **Building Phase Isolation**: Code compilation happens in isolated jobs to prevent crashing the Manager.
+- **Graceful Resumption**: On Manager restart, it reconciles with PostgreSQL to resume tracking in-flight jobs.
 
 ## API Reference
 
-### Authentication
+### Jobs
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/auth/login` | POST | Authenticate and get token |
-
-### Jobs
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/jobs` | GET | user/admin | List jobs |
-| `/jobs` | POST | user/admin | Submit new job |
-| `/jobs/:id` | GET | user/admin | Get job details |
-| `/jobs/:id/cancel` | POST | user/admin | Cancel job |
-| `/jobs/:id/output` | GET | user/admin | Get output URLs |
-
-### Files
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/files/input` | POST | user/admin | Upload input file |
-| `/files/code` | POST | user/admin | Upload mapper/reducer |
-
-### Admin
-| Endpoint | Method | Auth | Description |
-|----------|--------|------|-------------|
-| `/admin/users` | GET | admin | List users |
-| `/admin/users` | POST | admin | Create user |
-| `/admin/users/:id` | DELETE | admin | Delete user |
-| `/admin/users/:id/roles` | POST | admin | Assign role |
-| `/admin/jobs` | GET | admin | List all jobs |
-
-## Technology Stack
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| **Language** | Go 1.25 | Core services |
-| **HTTP Framework** | Fiber v3 | REST API |
-| **Database** | PostgreSQL + sqlc | Type-safe queries |
-| **Object Storage** | MinIO | S3-compatible storage |
-| **Authentication** | Keycloak | OpenID Connect / OAuth 2.0 |
-| **Container Orchestration** | Kubernetes | Worker scheduling |
-| **CLI Framework** | Cobra | Command parsing |
-| **Logging** | Zap | Structured logging |
-| **Testing** | Testify | Assertions and mocks |
+| `/jobs/:id/progress` | GET | Returns phase-specific task completion stats |
+| `/jobs/:id` | DELETE | Hard cleanup of K8s resources and database records |
+| `/jobs/:id/cancel` | POST | Signals the supervisor to stop execution |
 
 ## License
 
 [MIT](LICENSE)
-
-## Acknowledgments
-
-- [MapReduce: Simplified Data Processing on Large Clusters](https://www.usenix.org/legacy/publications/library/proceedings/osdi04/tech/full_papers/dean/dean.pdf) - Dean & Ghemawat, OSDI'04
-- INF-419 Principles of Distributed Systems - Technical University of Crete

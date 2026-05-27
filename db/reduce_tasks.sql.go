@@ -140,6 +140,36 @@ func (q *Queries) GetReduceTask(ctx context.Context, taskID uuid.UUID) (ReduceTa
 	return i, err
 }
 
+const getReduceTaskJobNames = `-- name: GetReduceTaskJobNames :many
+SELECT DISTINCT k8s_job_name
+FROM reduce_tasks
+WHERE job_id = $1
+  AND k8s_job_name IS NOT NULL
+`
+
+func (q *Queries) GetReduceTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error) {
+	rows, err := q.query(ctx, q.getReduceTaskJobNamesStmt, getReduceTaskJobNames, jobID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []sql.NullString{}
+	for rows.Next() {
+		var k8s_job_name sql.NullString
+		if err := rows.Scan(&k8s_job_name); err != nil {
+			return nil, err
+		}
+		items = append(items, k8s_job_name)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getReduceTaskOutputPaths = `-- name: GetReduceTaskOutputPaths :many
 SELECT task_index, output_path
 FROM reduce_tasks

@@ -46,6 +46,12 @@ type MapTask struct {
 	OutputLocations pqtype.NullRawMessage `json:"output_locations"`
 }
 
+type PluginCache struct {
+	SourceHash string    `json:"source_hash"`
+	BinaryPath string    `json:"binary_path"`
+	LastUsedAt time.Time `json:"last_used_at"`
+}
+
 type ReduceTask struct {
 	TaskID      uuid.UUID      `json:"task_id"`
 	JobID       uuid.UUID      `json:"job_id"`
@@ -57,13 +63,4 @@ type ReduceTask struct {
 	StartedAt   sql.NullTime   `json:"started_at"`
 	CompletedAt sql.NullTime   `json:"completed_at"`
 	OutputPath  sql.NullString `json:"output_path"`
-}
-
-type User struct {
-	UserID       uuid.UUID      `json:"user_id"`
-	Username     string         `json:"username"`
-	PasswordHash string         `json:"password_hash"`
-	Role         string         `json:"role"`
-	Email        sql.NullString `json:"email"`
-	CreateAt     time.Time      `json:"create_at"`
 }

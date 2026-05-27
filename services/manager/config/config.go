@@ -28,6 +28,7 @@ type Config struct {
 
 	// Kubernetes worker dispatch
 	WorkerImage     string // WORKER_IMAGE
+	BuilderImage    string // BUILDER_IMAGE
 	WorkerNamespace string // WORKER_NAMESPACE
 	// ManagerURL is advertised to workers for POST /tasks/*/complete|fail callbacks.
 	ManagerURL string // MANAGER_URL
@@ -66,6 +67,7 @@ func Load() (*Config, error) {
 	v.SetDefault("minio_bucket_output", "output")
 	v.SetDefault("minio_use_ssl", false)
 	v.SetDefault("worker_image", "mirstar13/mapreduce-worker:latest")
+	v.SetDefault("builder_image", "starpal/mapreduce-builder:latest")
 	v.SetDefault("worker_namespace", "mapreduce")
 	v.SetDefault("manager_url", "http://manager-api.mapreduce.svc.cluster.local:8080")
 	v.SetDefault("task_timeout_seconds", 300)
@@ -86,6 +88,7 @@ func Load() (*Config, error) {
 		MinioSecretKey:     v.GetString("minio_secret_key"),
 		MinioUseSSL:        v.GetBool("minio_use_ssl"),
 		WorkerImage:        v.GetString("worker_image"),
+		BuilderImage:       v.GetString("builder_image"),
 		WorkerNamespace:    v.GetString("worker_namespace"),
 		ManagerURL:         v.GetString("manager_url"),
 		TaskTimeoutSeconds: v.GetInt("task_timeout_seconds"),

@@ -23,13 +23,17 @@ type Querier interface {
 	CreateJob(ctx context.Context, arg CreateJobParams) (Job, error)
 	CreateMapTask(ctx context.Context, arg CreateMapTaskParams) (MapTask, error)
 	CreateReduceTask(ctx context.Context, arg CreateReduceTaskParams) (ReduceTask, error)
+	DeleteCachedPlugin(ctx context.Context, sourceHash string) error
+	DeleteJob(ctx context.Context, jobID uuid.UUID) error
 	FailJob(ctx context.Context, arg FailJobParams) error
 	// Used by the Manager on startup to re-attach to in-flight jobs it owns.
 	GetActiveJobsByReplica(ctx context.Context, ownerReplica string) ([]Job, error)
 	GetAllJobs(ctx context.Context) ([]Job, error)
+	GetCachedPlugin(ctx context.Context, sourceHash string) (PluginCache, error)
 	GetJob(ctx context.Context, jobID uuid.UUID) (Job, error)
 	GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job, error)
 	GetMapTask(ctx context.Context, taskID uuid.UUID) (MapTask, error)
+	GetMapTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error)
 	// Used by the Manager when building the reduce task inputs.
 	// Returns all completed map tasks and their output_locations for a job.
 	GetMapTaskOutputLocations(ctx context.Context, jobID uuid.UUID) ([]GetMapTaskOutputLocationsRow, error)
@@ -40,6 +44,7 @@ type Querier interface {
 	// Used by the Manager to find tasks ready to dispatch as K8s Jobs.
 	GetPendingReduceTasks(ctx context.Context, arg GetPendingReduceTasksParams) ([]ReduceTask, error)
 	GetReduceTask(ctx context.Context, taskID uuid.UUID) (ReduceTask, error)
+	GetReduceTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error)
 	// Used to build the final job output listing.
 	GetReduceTaskOutputPaths(ctx context.Context, jobID uuid.UUID) ([]GetReduceTaskOutputPathsRow, error)
 	GetReduceTasksByJob(ctx context.Context, jobID uuid.UUID) ([]ReduceTask, error)
@@ -50,6 +55,7 @@ type Querier interface {
 	GetStaleRunningReduceTasks(ctx context.Context, dollar_1 sql.NullString) ([]ReduceTask, error)
 	IncrementMapTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	IncrementReduceTaskRetry(ctx context.Context, taskID uuid.UUID) error
+	ListStalePlugins(ctx context.Context, dollar_1 sql.NullString) ([]PluginCache, error)
 	// Called when the worker POSTs to /tasks/:id/complete.
 	// output_locations is a JSONB array: [{"reducer_index":0,"path":"..."}]
 	MarkMapTaskCompleted(ctx context.Context, arg MarkMapTaskCompletedParams) error
@@ -62,7 +68,11 @@ type Querier interface {
 	MarkReduceTaskFailed(ctx context.Context, taskID uuid.UUID) error
 	// Called when the Manager creates the K8s Job for this task.
 	MarkReduceTaskRunning(ctx context.Context, arg MarkReduceTaskRunningParams) error
+	UpdateJobMapperPath(ctx context.Context, arg UpdateJobMapperPathParams) error
+	UpdateJobReducerPath(ctx context.Context, arg UpdateJobReducerPathParams) error
 	UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams) error
+	UpdatePluginLastUsed(ctx context.Context, sourceHash string) error
+	UpsertCachedPlugin(ctx context.Context, arg UpsertCachedPluginParams) error
 }
 
 var _ Querier = (*Queries)(nil)

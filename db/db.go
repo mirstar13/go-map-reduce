@@ -45,6 +45,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createReduceTaskStmt, err = db.PrepareContext(ctx, createReduceTask); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateReduceTask: %w", err)
 	}
+	if q.deleteCachedPluginStmt, err = db.PrepareContext(ctx, deleteCachedPlugin); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteCachedPlugin: %w", err)
+	}
+	if q.deleteJobStmt, err = db.PrepareContext(ctx, deleteJob); err != nil {
+		return nil, fmt.Errorf("error preparing query DeleteJob: %w", err)
+	}
 	if q.failJobStmt, err = db.PrepareContext(ctx, failJob); err != nil {
 		return nil, fmt.Errorf("error preparing query FailJob: %w", err)
 	}
@@ -54,6 +60,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getAllJobsStmt, err = db.PrepareContext(ctx, getAllJobs); err != nil {
 		return nil, fmt.Errorf("error preparing query GetAllJobs: %w", err)
 	}
+	if q.getCachedPluginStmt, err = db.PrepareContext(ctx, getCachedPlugin); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCachedPlugin: %w", err)
+	}
 	if q.getJobStmt, err = db.PrepareContext(ctx, getJob); err != nil {
 		return nil, fmt.Errorf("error preparing query GetJob: %w", err)
 	}
@@ -62,6 +71,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getMapTaskStmt, err = db.PrepareContext(ctx, getMapTask); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMapTask: %w", err)
+	}
+	if q.getMapTaskJobNamesStmt, err = db.PrepareContext(ctx, getMapTaskJobNames); err != nil {
+		return nil, fmt.Errorf("error preparing query GetMapTaskJobNames: %w", err)
 	}
 	if q.getMapTaskOutputLocationsStmt, err = db.PrepareContext(ctx, getMapTaskOutputLocations); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMapTaskOutputLocations: %w", err)
@@ -80,6 +92,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getReduceTaskStmt, err = db.PrepareContext(ctx, getReduceTask); err != nil {
 		return nil, fmt.Errorf("error preparing query GetReduceTask: %w", err)
+	}
+	if q.getReduceTaskJobNamesStmt, err = db.PrepareContext(ctx, getReduceTaskJobNames); err != nil {
+		return nil, fmt.Errorf("error preparing query GetReduceTaskJobNames: %w", err)
 	}
 	if q.getReduceTaskOutputPathsStmt, err = db.PrepareContext(ctx, getReduceTaskOutputPaths); err != nil {
 		return nil, fmt.Errorf("error preparing query GetReduceTaskOutputPaths: %w", err)
@@ -102,6 +117,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.incrementReduceTaskRetryStmt, err = db.PrepareContext(ctx, incrementReduceTaskRetry); err != nil {
 		return nil, fmt.Errorf("error preparing query IncrementReduceTaskRetry: %w", err)
 	}
+	if q.listStalePluginsStmt, err = db.PrepareContext(ctx, listStalePlugins); err != nil {
+		return nil, fmt.Errorf("error preparing query ListStalePlugins: %w", err)
+	}
 	if q.markMapTaskCompletedStmt, err = db.PrepareContext(ctx, markMapTaskCompleted); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkMapTaskCompleted: %w", err)
 	}
@@ -120,8 +138,20 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.markReduceTaskRunningStmt, err = db.PrepareContext(ctx, markReduceTaskRunning); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkReduceTaskRunning: %w", err)
 	}
+	if q.updateJobMapperPathStmt, err = db.PrepareContext(ctx, updateJobMapperPath); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateJobMapperPath: %w", err)
+	}
+	if q.updateJobReducerPathStmt, err = db.PrepareContext(ctx, updateJobReducerPath); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateJobReducerPath: %w", err)
+	}
 	if q.updateJobStatusStmt, err = db.PrepareContext(ctx, updateJobStatus); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateJobStatus: %w", err)
+	}
+	if q.updatePluginLastUsedStmt, err = db.PrepareContext(ctx, updatePluginLastUsed); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdatePluginLastUsed: %w", err)
+	}
+	if q.upsertCachedPluginStmt, err = db.PrepareContext(ctx, upsertCachedPlugin); err != nil {
+		return nil, fmt.Errorf("error preparing query UpsertCachedPlugin: %w", err)
 	}
 	return &q, nil
 }
@@ -163,6 +193,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing createReduceTaskStmt: %w", cerr)
 		}
 	}
+	if q.deleteCachedPluginStmt != nil {
+		if cerr := q.deleteCachedPluginStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteCachedPluginStmt: %w", cerr)
+		}
+	}
+	if q.deleteJobStmt != nil {
+		if cerr := q.deleteJobStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing deleteJobStmt: %w", cerr)
+		}
+	}
 	if q.failJobStmt != nil {
 		if cerr := q.failJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing failJobStmt: %w", cerr)
@@ -178,6 +218,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getAllJobsStmt: %w", cerr)
 		}
 	}
+	if q.getCachedPluginStmt != nil {
+		if cerr := q.getCachedPluginStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCachedPluginStmt: %w", cerr)
+		}
+	}
 	if q.getJobStmt != nil {
 		if cerr := q.getJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getJobStmt: %w", cerr)
@@ -191,6 +236,11 @@ func (q *Queries) Close() error {
 	if q.getMapTaskStmt != nil {
 		if cerr := q.getMapTaskStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getMapTaskStmt: %w", cerr)
+		}
+	}
+	if q.getMapTaskJobNamesStmt != nil {
+		if cerr := q.getMapTaskJobNamesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getMapTaskJobNamesStmt: %w", cerr)
 		}
 	}
 	if q.getMapTaskOutputLocationsStmt != nil {
@@ -221,6 +271,11 @@ func (q *Queries) Close() error {
 	if q.getReduceTaskStmt != nil {
 		if cerr := q.getReduceTaskStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getReduceTaskStmt: %w", cerr)
+		}
+	}
+	if q.getReduceTaskJobNamesStmt != nil {
+		if cerr := q.getReduceTaskJobNamesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getReduceTaskJobNamesStmt: %w", cerr)
 		}
 	}
 	if q.getReduceTaskOutputPathsStmt != nil {
@@ -258,6 +313,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing incrementReduceTaskRetryStmt: %w", cerr)
 		}
 	}
+	if q.listStalePluginsStmt != nil {
+		if cerr := q.listStalePluginsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing listStalePluginsStmt: %w", cerr)
+		}
+	}
 	if q.markMapTaskCompletedStmt != nil {
 		if cerr := q.markMapTaskCompletedStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markMapTaskCompletedStmt: %w", cerr)
@@ -288,9 +348,29 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing markReduceTaskRunningStmt: %w", cerr)
 		}
 	}
+	if q.updateJobMapperPathStmt != nil {
+		if cerr := q.updateJobMapperPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateJobMapperPathStmt: %w", cerr)
+		}
+	}
+	if q.updateJobReducerPathStmt != nil {
+		if cerr := q.updateJobReducerPathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateJobReducerPathStmt: %w", cerr)
+		}
+	}
 	if q.updateJobStatusStmt != nil {
 		if cerr := q.updateJobStatusStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing updateJobStatusStmt: %w", cerr)
+		}
+	}
+	if q.updatePluginLastUsedStmt != nil {
+		if cerr := q.updatePluginLastUsedStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updatePluginLastUsedStmt: %w", cerr)
+		}
+	}
+	if q.upsertCachedPluginStmt != nil {
+		if cerr := q.upsertCachedPluginStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing upsertCachedPluginStmt: %w", cerr)
 		}
 	}
 	return err
@@ -339,18 +419,23 @@ type Queries struct {
 	createJobStmt                    *sql.Stmt
 	createMapTaskStmt                *sql.Stmt
 	createReduceTaskStmt             *sql.Stmt
+	deleteCachedPluginStmt           *sql.Stmt
+	deleteJobStmt                    *sql.Stmt
 	failJobStmt                      *sql.Stmt
 	getActiveJobsByReplicaStmt       *sql.Stmt
 	getAllJobsStmt                   *sql.Stmt
+	getCachedPluginStmt              *sql.Stmt
 	getJobStmt                       *sql.Stmt
 	getJobsByUserStmt                *sql.Stmt
 	getMapTaskStmt                   *sql.Stmt
+	getMapTaskJobNamesStmt           *sql.Stmt
 	getMapTaskOutputLocationsStmt    *sql.Stmt
 	getMapTasksByJobStmt             *sql.Stmt
 	getMapTasksByJobAndStatusStmt    *sql.Stmt
 	getPendingMapTasksStmt           *sql.Stmt
 	getPendingReduceTasksStmt        *sql.Stmt
 	getReduceTaskStmt                *sql.Stmt
+	getReduceTaskJobNamesStmt        *sql.Stmt
 	getReduceTaskOutputPathsStmt     *sql.Stmt
 	getReduceTasksByJobStmt          *sql.Stmt
 	getReduceTasksByJobAndStatusStmt *sql.Stmt
@@ -358,13 +443,18 @@ type Queries struct {
 	getStaleRunningReduceTasksStmt   *sql.Stmt
 	incrementMapTaskRetryStmt        *sql.Stmt
 	incrementReduceTaskRetryStmt     *sql.Stmt
+	listStalePluginsStmt             *sql.Stmt
 	markMapTaskCompletedStmt         *sql.Stmt
 	markMapTaskFailedStmt            *sql.Stmt
 	markMapTaskRunningStmt           *sql.Stmt
 	markReduceTaskCompletedStmt      *sql.Stmt
 	markReduceTaskFailedStmt         *sql.Stmt
 	markReduceTaskRunningStmt        *sql.Stmt
+	updateJobMapperPathStmt          *sql.Stmt
+	updateJobReducerPathStmt         *sql.Stmt
 	updateJobStatusStmt              *sql.Stmt
+	updatePluginLastUsedStmt         *sql.Stmt
+	upsertCachedPluginStmt           *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
@@ -378,18 +468,23 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		createJobStmt:                    q.createJobStmt,
 		createMapTaskStmt:                q.createMapTaskStmt,
 		createReduceTaskStmt:             q.createReduceTaskStmt,
+		deleteCachedPluginStmt:           q.deleteCachedPluginStmt,
+		deleteJobStmt:                    q.deleteJobStmt,
 		failJobStmt:                      q.failJobStmt,
 		getActiveJobsByReplicaStmt:       q.getActiveJobsByReplicaStmt,
 		getAllJobsStmt:                   q.getAllJobsStmt,
+		getCachedPluginStmt:              q.getCachedPluginStmt,
 		getJobStmt:                       q.getJobStmt,
 		getJobsByUserStmt:                q.getJobsByUserStmt,
 		getMapTaskStmt:                   q.getMapTaskStmt,
+		getMapTaskJobNamesStmt:           q.getMapTaskJobNamesStmt,
 		getMapTaskOutputLocationsStmt:    q.getMapTaskOutputLocationsStmt,
 		getMapTasksByJobStmt:             q.getMapTasksByJobStmt,
 		getMapTasksByJobAndStatusStmt:    q.getMapTasksByJobAndStatusStmt,
 		getPendingMapTasksStmt:           q.getPendingMapTasksStmt,
 		getPendingReduceTasksStmt:        q.getPendingReduceTasksStmt,
 		getReduceTaskStmt:                q.getReduceTaskStmt,
+		getReduceTaskJobNamesStmt:        q.getReduceTaskJobNamesStmt,
 		getReduceTaskOutputPathsStmt:     q.getReduceTaskOutputPathsStmt,
 		getReduceTasksByJobStmt:          q.getReduceTasksByJobStmt,
 		getReduceTasksByJobAndStatusStmt: q.getReduceTasksByJobAndStatusStmt,
@@ -397,12 +492,17 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getStaleRunningReduceTasksStmt:   q.getStaleRunningReduceTasksStmt,
 		incrementMapTaskRetryStmt:        q.incrementMapTaskRetryStmt,
 		incrementReduceTaskRetryStmt:     q.incrementReduceTaskRetryStmt,
+		listStalePluginsStmt:             q.listStalePluginsStmt,
 		markMapTaskCompletedStmt:         q.markMapTaskCompletedStmt,
 		markMapTaskFailedStmt:            q.markMapTaskFailedStmt,
 		markMapTaskRunningStmt:           q.markMapTaskRunningStmt,
 		markReduceTaskCompletedStmt:      q.markReduceTaskCompletedStmt,
 		markReduceTaskFailedStmt:         q.markReduceTaskFailedStmt,
 		markReduceTaskRunningStmt:        q.markReduceTaskRunningStmt,
+		updateJobMapperPathStmt:          q.updateJobMapperPathStmt,
+		updateJobReducerPathStmt:         q.updateJobReducerPathStmt,
 		updateJobStatusStmt:              q.updateJobStatusStmt,
+		updatePluginLastUsedStmt:         q.updatePluginLastUsedStmt,
+		upsertCachedPluginStmt:           q.upsertCachedPluginStmt,
 	}
 }

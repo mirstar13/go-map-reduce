@@ -76,10 +76,20 @@ spec:
         role: primary
     spec:
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
 
       containers:
         - name: postgres
           image: postgres:16-alpine
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           ports:
             - name: postgres
               containerPort: 5432
@@ -150,6 +160,10 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: postgres-init
               mountPath: /docker-entrypoint-initdb.d/
+            - name: tmp-dir
+              mountPath: /tmp
+            - name: socket-dir
+              mountPath: /var/run/postgresql
 
           readinessProbe:
             exec:
@@ -168,7 +182,7 @@ spec:
           resources:
             requests:
               memory: "256Mi"
-              cpu: "250m"
+              cpu: "500m"
             limits:
               memory: "1Gi"
               cpu: "1"
@@ -178,6 +192,10 @@ spec:
           configMap:
             name: postgres-init-scripts
             defaultMode: 0755   # scripts must be executable
+        - name: tmp-dir
+          emptyDir: {}
+        - name: socket-dir
+          emptyDir: {}
 
   volumeClaimTemplates:
     - metadata:
@@ -233,7 +251,8 @@ spec:
     - name: postgres
       port: 5432
       targetPort: 5432
-      nodePort: 30532---
+      nodePort: 30532
+---
 # PostgreSQL Read Replica — Streaming Hot Standby
 #
 # A single hot-standby replica that:
@@ -275,6 +294,10 @@ spec:
         role: replica
     spec:
       terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
 
       initContainers:
         # pg_basebackup init container
@@ -285,6 +308,7 @@ spec:
         # The main container then starts postgres and finds these files.
         - name: pg-basebackup
           image: postgres:16-alpine
+          imagePullPolicy: Always
           command:
             - /bin/sh
             - -c
@@ -318,8 +342,6 @@ spec:
                 --progress              \
                 --checkpoint=fast
 
-              # Fix ownership: the main container runs as uid 999 (postgres).
-              chown -R 999:999 "$PGDATA"
               echo "==> Basebackup complete."
 
           env:
@@ -334,13 +356,30 @@ spec:
           volumeMounts:
             - name: postgres-replica-data
               mountPath: /var/lib/postgresql/data
-
+            - name: socket-dir
+              mountPath: /var/run/postgresql
           securityContext:
-            runAsUser: 0   # root; needed to chown after pg_basebackup
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
 
       containers:
         - name: postgres
           image: postgres:16-alpine
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           ports:
             - name: postgres
               containerPort: 5432
@@ -384,6 +423,10 @@ spec:
           volumeMounts:
             - name: postgres-replica-data
               mountPath: /var/lib/postgresql/data
+            - name: tmp-dir
+              mountPath: /tmp
+            - name: socket-dir
+              mountPath: /var/run/postgresql
 
           readinessProbe:
             exec:
@@ -402,10 +445,16 @@ spec:
           resources:
             requests:
               memory: "256Mi"
-              cpu: "250m"
+              cpu: "500m"
             limits:
               memory: "1Gi"
               cpu: "1"
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
+        - name: socket-dir
+          emptyDir: {}
 
   volumeClaimTemplates:
     - metadata:

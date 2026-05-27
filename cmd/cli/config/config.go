@@ -1,6 +1,3 @@
-// Package config manages the CLI's persistent configuration file.
-// The file lives at ~/.mapreduce/config.json and stores the server URL
-// and the current access token so users only need to log in once.
 package config
 
 import (
@@ -16,6 +13,8 @@ type Config struct {
 	ServerURL string `json:"server_url"`
 	// Token is the current Keycloak access token (JWT).
 	Token string `json:"token"`
+	// MapperThresholdMB is the amount of data (in MB) assigned per mapper.
+	MapperThresholdMB int `json:"mapper_threshold_mb"`
 }
 
 // configPath returns the path to the config file.
@@ -28,7 +27,7 @@ func configPath() (string, error) {
 }
 
 // Load reads the config file. Returns an empty Config (not an error) if the
-// file does not exist yet — first-run scenario.
+// file does not exist yet first-run scenario.
 func Load() (*Config, error) {
 	path, err := configPath()
 	if err != nil {
@@ -37,7 +36,7 @@ func Load() (*Config, error) {
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return &Config{}, nil
+		return &Config{MapperThresholdMB: 10}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("config: read %s: %w", path, err)
@@ -46,6 +45,11 @@ func Load() (*Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+
+	// Default to 10 if not set.
+	if cfg.MapperThresholdMB <= 0 {
+		cfg.MapperThresholdMB = 10
 	}
 	return &cfg, nil
 }
@@ -66,7 +70,7 @@ func (c *Config) Save() error {
 		return fmt.Errorf("config: marshal: %w", err)
 	}
 
-	// Write with restricted permissions — the token is a credential.
+	// Write with restricted permissions the token is a credential.
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}

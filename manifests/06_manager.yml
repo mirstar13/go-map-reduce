@@ -76,10 +76,23 @@ spec:
       serviceAccountName: manager
       terminationGracePeriodSeconds: 60
 
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 2000
+
       containers:
         - name: manager
           image: starpal/mapreduce-manager-service:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: http
               containerPort: 8080
@@ -150,6 +163,11 @@ spec:
                 configMapKeyRef:
                   name: mapreduce-config
                   key: WORKER_IMAGE
+            - name: BUILDER_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: BUILDER_IMAGE
             - name: WORKER_NAMESPACE
               valueFrom:
                 configMapKeyRef:
@@ -186,11 +204,19 @@ spec:
           # Resources 
           resources:
             requests:
-              cpu: "250m"
+              cpu: "500m"
               memory: "256Mi"
             limits:
-              cpu: "1"
-              memory: "512Mi"
+              cpu: "500m"
+              memory: "1Gi"
+
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
 
 ---
 # Headless Service (required by StatefulSet) 

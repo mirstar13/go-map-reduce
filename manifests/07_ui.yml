@@ -11,7 +11,7 @@ metadata:
   labels:
     app: ui-service
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: ui-service
@@ -35,10 +35,23 @@ spec:
             matchLabels:
               app: ui-service
 
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 2000
+
       containers:
         - name: ui-service
           image: starpal/mapreduce-ui-service:latest
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8081
               name: http
@@ -144,11 +157,19 @@ spec:
           # Resource limits
           resources:
             requests:
-              cpu: "100m"
-              memory: "128Mi"
+              cpu: "500m"
+              memory: "512Mi"
             limits:
               cpu: "500m"
-              memory: "256Mi"
+              memory: "2Gi"
+
+          volumeMounts:
+            - name: tmp-dir
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp-dir
+          emptyDir: {}
 
 ---
 # ClusterIP Service (internal access)
