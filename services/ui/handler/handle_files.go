@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"bytes"
 	"io"
+	"mime"
 	"mime/multipart"
 	"strings"
 
@@ -35,6 +37,7 @@ func (h *FileHandler) UploadCode(c fiber.Ctx) error {
 // streamUpload uses a multipart reader to stream the file directly to MinIO
 // without buffering the entire body in memory.
 func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
+	h.log.Info("streamUpload started", zap.String("kind", kind), zap.String("content-type", string(c.Request().Header.ContentType())))
 	contentType := string(c.Request().Header.ContentType())
 	if !strings.HasPrefix(contentType, "multipart/form-data") {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -42,9 +45,33 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 		})
 	}
 
-	// We use the standard multipart.Reader to stream the body.
-	// Fiber v3 allows accessing the raw body stream via c.Request().BodyStream().
-	reader := multipart.NewReader(c.Request().BodyStream(), getBoundary(contentType))
+	// Correctly parse media type to get the boundary parameter.
+	_, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid content-type",
+		})
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "missing boundary in content-type",
+		})
+	}
+
+	// We use the underlying fasthttp request context to access the body stream.
+	// This requires StreamRequestBody: true in Fiber config.
+	bodyReader := c.RequestCtx().RequestBodyStream()
+	if bodyReader == nil {
+		bodyReader = bytes.NewReader(c.Request().Body())
+	}
+	reader := multipart.NewReader(bodyReader, boundary)
+
+	var (
+		objectPath string
+		uploadErr  error
+		created    bool
+	)
 
 	for {
 		part, err := reader.NextPart()
@@ -53,52 +80,46 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 		}
 		if err != nil {
 			h.log.Error("upload: read next part", zap.Error(err))
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "failed to parse multipart form",
-			})
+			if !created {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": "failed to parse multipart form",
+				})
+			}
+			break
 		}
 
-		if part.FormName() != "file" {
-			part.Close()
-			continue
+		if part.FormName() == "file" && !created {
+			filename := part.FileName()
+			if filename == "" {
+				part.Close()
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": "no filename provided in 'file' part",
+				})
+			}
+
+			// Determine the size if possible.
+			size := int64(-1)
+
+			switch kind {
+			case "input":
+				objectPath, uploadErr = h.minio.UploadInput(c.Context(), filename, part, size)
+			case "code":
+				objectPath, uploadErr = h.minio.UploadCode(c.Context(), filename, part, size)
+			}
+
+			if uploadErr != nil {
+				h.log.Error("upload: store to minio", zap.String("kind", kind), zap.Error(uploadErr))
+				part.Close()
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": "failed to store file",
+				})
+			}
+			created = true
 		}
-
-		filename := part.FileName()
-		if filename == "" {
-			part.Close()
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "no filename provided in 'file' part",
-			})
-		}
-
-		var (
-			objectPath string
-			uploadErr  error
-		)
-
-		// Determine the size if possible. If not provided by client, MinIO will buffer 
-		// internally to calculate it (partially defeating the stream if not careful), 
-		// but it's still better than Fiber buffering the whole thing.
-		// Benchmark runner sends content-length for each part usually.
-		size := int64(-1)
-
-		switch kind {
-		case "input":
-			objectPath, uploadErr = h.minio.UploadInput(c.Context(), filename, part, size)
-		case "code":
-			objectPath, uploadErr = h.minio.UploadCode(c.Context(), filename, part, size)
-		}
-
-		if uploadErr != nil {
-			part.Close()
-			h.log.Error("upload: store to minio", zap.String("kind", kind), zap.Error(uploadErr))
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "failed to store file",
-			})
-		}
-
 		part.Close()
+	}
 
+	if created {
 		h.log.Info("file uploaded (streamed)",
 			zap.String("kind", kind),
 			zap.String("path", objectPath),
@@ -114,12 +135,4 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 		"error": "no 'file' field found in form",
 	})
-}
-
-func getBoundary(contentType string) string {
-	parts := strings.Split(contentType, "boundary=")
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[1]
 }

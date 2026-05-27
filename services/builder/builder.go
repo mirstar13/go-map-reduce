@@ -27,6 +27,15 @@ func main() {
 	}
 	defer log.Sync() //nolint:errcheck
 
+	// Set environment variables for Go toolchain globally for this process and children.
+	// This ensures consistency across all exec.Command calls.
+	os.Setenv("HOME", "/tmp")
+	os.Setenv("GOCACHE", "/tmp/go-cache")
+	os.Setenv("GOMODCACHE", "/tmp/go-mod")
+	os.Setenv("GOPATH", "/tmp/go")
+	os.Setenv("CGO_ENABLED", "0")
+	os.Setenv("GOPROXY", "https://proxy.golang.org,direct")
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal("configuration error", zap.Error(err))
@@ -56,6 +65,11 @@ func main() {
 		log:    log,
 		tmpDir: "/tmp/builder",
 	}
+
+	// Pre-create Go cache directories in /tmp (which is a writable emptyDir)
+	_ = os.MkdirAll("/tmp/go-cache", 0755)
+	_ = os.MkdirAll("/tmp/go-mod", 0755)
+	_ = os.MkdirAll("/tmp/go", 0755)
 
 	if err := os.MkdirAll(b.tmpDir, 0755); err != nil {
 		log.Fatal("failed to create tmp dir", zap.Error(err))
@@ -166,32 +180,31 @@ func (b *builder) generateMain(path string) error {
 
 // initGoModule initializes a go module in the build directory.
 func (b *builder) initGoModule(ctx context.Context, buildDir string) error {
-	// Create go.mod
-	goMod := `module plugin
-
-go 1.25
-
-require github.com/hashicorp/go-plugin v1.6.0
-require github.com/mirstar13/go-map-reduce v0.0.0
-`
-	modPath := filepath.Join(buildDir, "go.mod")
-	if err := os.WriteFile(modPath, []byte(goMod), 0644); err != nil {
-		return fmt.Errorf("write go.mod: %w", err)
+	// 1. go mod init
+	cmd := exec.CommandContext(ctx, "go", "mod", "init", "userplugin")
+	cmd.Dir = buildDir
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("go mod init: %w", err)
 	}
 
-	// Run go mod tidy to resolve dependencies
-	cmd := exec.CommandContext(ctx, "go", "mod", "tidy")
+	// 2. go mod edit -replace
+	// Point to the core project source we copied into the image
+	cmd = exec.CommandContext(ctx, "go", "mod", "edit", "-replace", "github.com/mirstar13/go-map-reduce=/app/core")
 	cmd.Dir = buildDir
-	cmd.Env = append(os.Environ(),
-		"GOPROXY=https://proxy.golang.org,direct",
-		"CGO_ENABLED=0",
-	)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("go mod edit -replace: %w", err)
+	}
+
+	// 3. go mod tidy
+	cmd = exec.CommandContext(ctx, "go", "mod", "tidy")
+	cmd.Dir = buildDir
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		b.log.Warn("go mod tidy failed (may be okay)", zap.String("stderr", stderr.String()))
+		b.log.Warn("go mod tidy failed", zap.String("stderr", stderr.String()))
+		// We proceed anyway as the build might still work if the module cache is warm
 	}
 
 	return nil
@@ -201,15 +214,11 @@ require github.com/mirstar13/go-map-reduce v0.0.0
 func (b *builder) compile(ctx context.Context, buildDir, outputPath string) error {
 	cmd := exec.CommandContext(ctx, "go", "build",
 		"-o", outputPath,
+		"-tags", "plugin",
 		"-ldflags=-s -w",
 		".",
 	)
 	cmd.Dir = buildDir
-	cmd.Env = append(os.Environ(),
-		"CGO_ENABLED=0",
-		"GOOS=linux",
-		"GOARCH=amd64",
-	)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -321,7 +330,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: mrplugin.Handshake,
 		Plugins: map[string]plugin.Plugin{
-			"mapper": &mrplugin.MapperPlugin{Impl: &MapperImpl{}},
+			"mapper": &mrplugin.MapperPlugin{Impl: Mapper},
 		},
 	})
 }
@@ -339,7 +348,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: mrplugin.Handshake,
 		Plugins: map[string]plugin.Plugin{
-			"reducer": &mrplugin.ReducerPlugin{Impl: &ReducerImpl{}},
+			"reducer": &mrplugin.ReducerPlugin{Impl: Reducer},
 		},
 	})
 }

@@ -41,6 +41,9 @@ type Config struct {
 	// Observability
 	LogLevel  string // LOG_LEVEL,  default "info"  — debug|info|warn|error
 	LogFormat string // LOG_FORMAT, default "json"  — json|console
+
+	// Limits
+	MaxBodySizeMB int // UI_MAX_BODY_SIZE_MB, default 10240 (10GB)
 }
 
 // Load reads configuration for the UI service.
@@ -70,6 +73,7 @@ func Load() (*Config, error) {
 	v.SetDefault("minio_use_ssl", false)
 	v.SetDefault("log_level", "info")
 	v.SetDefault("log_format", "json")
+	v.SetDefault("ui_max_body_size_mb", 10240)
 
 	cfg := &Config{
 		Port:                  v.GetString("ui_port"),
@@ -91,6 +95,7 @@ func Load() (*Config, error) {
 		MinioUseSSL:           v.GetBool("minio_use_ssl"),
 		LogLevel:              v.GetString("log_level"),
 		LogFormat:             v.GetString("log_format"),
+		MaxBodySizeMB:         v.GetInt("ui_max_body_size_mb"),
 	}
 
 	required := []struct{ key, val string }{
