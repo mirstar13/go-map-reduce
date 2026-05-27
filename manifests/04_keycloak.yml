@@ -141,8 +141,8 @@ spec:
 
           resources:
             requests:
-              memory: "1Gi"
-              cpu: "1"
+              memory: "256Mi"
+              cpu: "500m"
             limits:
               memory: "1Gi"
               cpu: "1"
