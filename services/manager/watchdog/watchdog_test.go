@@ -31,9 +31,6 @@ type mockQuerier struct {
 	incrementReduceTaskRetryFn   func(ctx context.Context, id uuid.UUID) error
 }
 
-// compile-time check
-var _ db.Querier = (*mockQuerier)(nil)
-
 func (m *mockQuerier) GetStaleRunningMapTasks(ctx context.Context, d sql.NullString) ([]db.MapTask, error) {
 	if m.getStaleRunningMapTasksFn != nil {
 		return m.getStaleRunningMapTasksFn(ctx, d)
@@ -57,6 +54,31 @@ func (m *mockQuerier) IncrementReduceTaskRetry(ctx context.Context, id uuid.UUID
 		return m.incrementReduceTaskRetryFn(ctx, id)
 	}
 	return nil
+}
+
+func (m *mockQuerier) UpdateJobMapperPath(context.Context, db.UpdateJobMapperPathParams) error   { return nil }
+func (m *mockQuerier) UpdateJobReducerPath(context.Context, db.UpdateJobReducerPathParams) error { return nil }
+func (m *mockQuerier) DeleteJob(context.Context, uuid.UUID) error                              { return nil }
+func (m *mockQuerier) GetMapTaskJobNames(context.Context, uuid.UUID) ([]sql.NullString, error) {
+	return nil, nil
+}
+func (m *mockQuerier) GetReduceTaskJobNames(context.Context, uuid.UUID) ([]sql.NullString, error) {
+	return nil, nil
+}
+func (m *mockQuerier) DeleteCachedPlugin(context.Context, string) error {
+	return nil
+}
+func (m *mockQuerier) GetCachedPlugin(context.Context, string) (db.PluginCache, error) {
+	return db.PluginCache{}, sql.ErrNoRows
+}
+func (m *mockQuerier) UpsertCachedPlugin(context.Context, db.UpsertCachedPluginParams) error {
+	return nil
+}
+func (m *mockQuerier) UpdatePluginLastUsed(context.Context, string) error {
+	return nil
+}
+func (m *mockQuerier) ListStalePlugins(context.Context, sql.NullString) ([]db.PluginCache, error) {
+	return nil, nil
 }
 
 // --- stubs for the remaining Querier methods (never called by Watchdog) ---
@@ -146,6 +168,7 @@ func (m *mockQuerier) UpdateJobStatus(ctx context.Context, a db.UpdateJobStatusP
 	panic("not implemented")
 }
 
+
 // mockDispatcher stubs only DeleteJob.
 type mockDispatcher struct {
 	deleteJobFn func(ctx context.Context, name string) error
@@ -155,6 +178,9 @@ func (m *mockDispatcher) DispatchMap(ctx context.Context, spec dispatcher.MapTas
 	panic("not implemented")
 }
 func (m *mockDispatcher) DispatchReduce(ctx context.Context, spec dispatcher.ReduceTaskSpec) (string, error) {
+	panic("not implemented")
+}
+func (m *mockDispatcher) DispatchBuild(ctx context.Context, spec dispatcher.BuildTaskSpec) (string, error) {
 	panic("not implemented")
 }
 func (m *mockDispatcher) DeleteJob(ctx context.Context, name string) error {

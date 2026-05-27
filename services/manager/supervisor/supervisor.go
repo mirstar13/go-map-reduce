@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 	"go.uber.org/zap"
 
 	"github.com/mirstar13/go-map-reduce/db"
@@ -65,6 +67,7 @@ type Supervisor struct {
 	queries    db.Querier
 	splitter   interfaces.Splitter
 	dispatcher interfaces.Dispatcher
+	minio      *minio.Client
 	cfg        *config.Config
 	log        *zap.Logger
 	registry   *Registry
@@ -79,6 +82,7 @@ func New(
 	queries db.Querier,
 	spl interfaces.Splitter,
 	disp interfaces.Dispatcher,
+	minio *minio.Client,
 	cfg *config.Config,
 	log *zap.Logger,
 	registry *Registry,
@@ -89,6 +93,7 @@ func New(
 		queries:    queries,
 		splitter:   spl,
 		dispatcher: disp,
+		minio:      minio,
 		cfg:        cfg,
 		log:        log.With(zap.String("job_id", job.JobID.String())),
 		registry:   registry,
@@ -111,6 +116,10 @@ func (s *Supervisor) Run(ctx context.Context) {
 	if err := s.step(ctx); err != nil {
 		s.log.Error("supervisor step failed", zap.Error(err))
 	}
+	if s.isTerminal() {
+		s.Cleanup(ctx)
+		return
+	}
 
 	for {
 		select {
@@ -128,20 +137,75 @@ func (s *Supervisor) Run(ctx context.Context) {
 				s.log.Error("supervisor step (tick) failed", zap.Error(err))
 			}
 		}
+
+		if s.isTerminal() {
+			s.Cleanup(ctx)
+			return
+		}
 	}
+}
+
+func (s *Supervisor) isTerminal() bool {
+	st := s.job.Status
+	return st == "COMPLETED" || st == "FAILED" || st == "CANCELLED"
+}
+
+// Cleanup removes all Kubernetes Jobs associated with this MapReduce job.
+func (s *Supervisor) Cleanup(ctx context.Context) {
+	s.log.Info("cleaning up Kubernetes resources")
+
+	// 1. Delete builder jobs (known patterns)
+	shortID := s.jobID.String()
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	_ = s.dispatcher.DeleteJob(ctx, fmt.Sprintf("build-map-%s", shortID))
+	_ = s.dispatcher.DeleteJob(ctx, fmt.Sprintf("build-red-%s", shortID))
+
+	// 2. Delete map task jobs
+	mapJobNames, err := s.queries.GetMapTaskJobNames(ctx, s.jobID)
+	if err == nil {
+		for _, name := range mapJobNames {
+			if name.Valid {
+				_ = s.dispatcher.DeleteJob(ctx, name.String)
+			}
+		}
+	}
+
+	// 3. Delete reduce task jobs
+	redJobNames, err := s.queries.GetReduceTaskJobNames(ctx, s.jobID)
+	if err == nil {
+		for _, name := range redJobNames {
+			if name.Valid {
+				_ = s.dispatcher.DeleteJob(ctx, name.String)
+			}
+		}
+	}
+
+	s.log.Info("cleanup complete")
 }
 
 // step reads the current job status and advances the state machine by one step.
 func (s *Supervisor) step(ctx context.Context) error {
 	job, err := s.queries.GetJob(ctx, s.jobID)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			s.log.Warn("job not found in database; stopping supervisor")
+			// We return nil so the error isn't logged as a failure, 
+			// but we set a flag or just rely on the fact that s.job wasn't updated.
+			// Better: set s.job.Status to a terminal state to trigger exit.
+			s.job.Status = "CANCELLED" 
+			return nil
+		}
 		return fmt.Errorf("step: get job: %w", err)
 	}
 	s.job = job
 
 	switch job.Status {
 	case "SUBMITTED":
-		return s.doSplit(ctx)
+		return s.doBuild(ctx)
+	case "BUILDING":
+		return s.checkBuildPhase(ctx)
 	case "SPLITTING":
 		// split already in progress; nothing to do — wait for tasks to appear
 	case "MAP_PHASE":
@@ -404,3 +468,133 @@ func (s *Supervisor) failJob(ctx context.Context, reason string) error {
 		ErrorMessage: sql.NullString{String: reason, Valid: true},
 	})
 }
+
+// doBuild starts the compilation of mapper and reducer plugins if needed.
+func (s *Supervisor) doBuild(ctx context.Context) error {
+	// Only build if the paths end in .go
+	needsMapBuild := strings.HasSuffix(s.job.MapperPath, ".go")
+	needsRedBuild := strings.HasSuffix(s.job.ReducerPath, ".go")
+
+	if !needsMapBuild && !needsRedBuild {
+		s.log.Info("no build needed; skipping to splitting")
+		return s.doSplit(ctx)
+	}
+
+	if err := s.queries.UpdateJobStatus(ctx, db.UpdateJobStatusParams{
+		JobID: s.jobID, Status: "BUILDING",
+	}); err != nil {
+		return fmt.Errorf("build: mark BUILDING: %w", err)
+	}
+
+	if needsMapBuild {
+		cached, err := s.checkCache(ctx, "mapper", s.job.MapperPath)
+		if err != nil {
+			return err
+		}
+		if cached {
+			needsMapBuild = false
+		}
+	}
+
+	if needsRedBuild {
+		cached, err := s.checkCache(ctx, "reducer", s.job.ReducerPath)
+		if err != nil {
+			return err
+		}
+		if cached {
+			needsRedBuild = false
+		}
+	}
+
+	// If both were cached, we might be able to transition immediately
+	if !needsMapBuild && !needsRedBuild {
+		s.log.Info("all plugins retrieved from cache; transitioning to splitting")
+		return s.doSplit(ctx)
+	}
+
+	if needsMapBuild {
+		outputPath := fmt.Sprintf("builds/%s/mapper", s.jobID)
+		_, err := s.dispatcher.DispatchBuild(ctx, dispatcher.BuildTaskSpec{
+			JobID:      s.jobID.String(),
+			PluginType: "mapper",
+			SourcePath: s.job.MapperPath,
+			OutputPath: outputPath,
+		})
+		if err != nil {
+			return s.failJob(ctx, fmt.Sprintf("build: dispatch mapper build: %v", err))
+		}
+	}
+
+	if needsRedBuild {
+		outputPath := fmt.Sprintf("builds/%s/reducer", s.jobID)
+		_, err := s.dispatcher.DispatchBuild(ctx, dispatcher.BuildTaskSpec{
+			JobID:      s.jobID.String(),
+			PluginType: "reducer",
+			SourcePath: s.job.ReducerPath,
+			OutputPath: outputPath,
+		})
+		if err != nil {
+			return s.failJob(ctx, fmt.Sprintf("build: dispatch reducer build: %v", err))
+		}
+	}
+
+	return nil
+}
+
+func (s *Supervisor) checkCache(ctx context.Context, pType, sourcePath string) (bool, error) {
+	// Get ETag from MinIO
+	info, err := s.minio.StatObject(ctx, s.cfg.MinioBucketCode, sourcePath, minio.StatObjectOptions{})
+	if err != nil {
+		return false, fmt.Errorf("cache: stat source %s: %w", sourcePath, err)
+	}
+
+	cached, err := s.queries.GetCachedPlugin(ctx, info.ETag)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("cache: check DB: %w", err)
+	}
+
+	// Verify the binary still exists in MinIO
+	_, err = s.minio.StatObject(ctx, s.cfg.MinioBucketCode, cached.BinaryPath, minio.StatObjectOptions{})
+	if err != nil {
+		s.log.Warn("cache hit but binary missing from storage; re-building", zap.String("path", cached.BinaryPath))
+		_ = s.queries.DeleteCachedPlugin(ctx, info.ETag)
+		return false, nil
+	}
+
+	// Found valid cache!
+	s.log.Info("plugin cache hit", zap.String("type", pType), zap.String("hash", info.ETag))
+	
+	if pType == "mapper" {
+		err = s.queries.UpdateJobMapperPath(ctx, db.UpdateJobMapperPathParams{JobID: s.jobID, MapperPath: cached.BinaryPath})
+	} else {
+		err = s.queries.UpdateJobReducerPath(ctx, db.UpdateJobReducerPathParams{JobID: s.jobID, ReducerPath: cached.BinaryPath})
+	}
+	if err != nil {
+		return false, fmt.Errorf("cache: update job path: %w", err)
+	}
+
+	_ = s.queries.UpdatePluginLastUsed(ctx, info.ETag)
+	return true, nil
+}
+
+
+// checkBuildPhase checks if the compilation is finished.
+func (s *Supervisor) checkBuildPhase(ctx context.Context) error {
+	// In this implementation, the builder calls back to the Manager.
+	// The Manager updates the job's mapper_path/reducer_path to the compiled binary.
+	// We just need to check if both paths now point to "builds/..." or were already binaries.
+
+	mapDone := !strings.HasSuffix(s.job.MapperPath, ".go")
+	redDone := !strings.HasSuffix(s.job.ReducerPath, ".go")
+
+	if mapDone && redDone {
+		s.log.Info("build completed; transitioning to splitting")
+		return s.doSplit(ctx)
+	}
+
+	return nil
+}
+

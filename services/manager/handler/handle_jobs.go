@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -13,8 +14,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/db"
 	"github.com/mirstar13/go-map-reduce/pkg/middleware/auth"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
-	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
-	"github.com/mirstar13/go-map-reduce/services/manager/splitter"
+	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 )
 
@@ -22,8 +22,8 @@ import (
 type JobHandler struct {
 	queries    db.Querier
 	registry   *supervisor.Registry
-	splitter   *splitter.Splitter
-	dispatcher *dispatcher.Dispatcher
+	splitter   interfaces.Splitter
+	dispatcher interfaces.Dispatcher
 	cfg        *config.Config
 	log        *zap.Logger
 	// launchSupervisor is called when a new job is created; injected from main.
@@ -34,8 +34,8 @@ type JobHandler struct {
 func NewJobHandler(
 	queries db.Querier,
 	registry *supervisor.Registry,
-	spl *splitter.Splitter,
-	disp *dispatcher.Dispatcher,
+	spl interfaces.Splitter,
+	disp interfaces.Dispatcher,
 	cfg *config.Config,
 	log *zap.Logger,
 	launch func(db.Job),
@@ -59,6 +59,23 @@ type submitJobRequest struct {
 	NumMappers  int32  `json:"num_mappers"`
 	NumReducers int32  `json:"num_reducers"`
 	InputFormat string `json:"input_format"` // "jsonl" | "text"; default "jsonl"
+}
+
+// taskProgress holds completion counts for one phase.
+type taskProgress struct {
+	Completed int64 `json:"completed"`
+	Failed    int64 `json:"failed"`
+	Total     int64 `json:"total"`
+}
+
+// progressResponse is the JSON shape for GET /jobs/:id/progress.
+type progressResponse struct {
+	JobID          string        `json:"job_id"`
+	Status         string        `json:"status"`
+	NumMappers     int32         `json:"num_mappers"`
+	NumReducers    int32         `json:"num_reducers"`
+	MapProgress    *taskProgress `json:"map_progress,omitempty"`
+	ReduceProgress *taskProgress `json:"reduce_progress,omitempty"`
 }
 
 // SubmitJob handles POST /jobs.
@@ -191,6 +208,61 @@ func (h *JobHandler) CancelJob(c fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"job_id": jobID, "status": "CANCELLED"})
 }
 
+// DeleteJob handles DELETE /jobs/:id.
+func (h *JobHandler) DeleteJob(c fiber.Ctx) error {
+	jobID, err := parseJobID(c)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	job, err := h.queries.GetJob(c.Context(), jobID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "job not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not get job"})
+	}
+
+	if err := assertAccess(c, job); err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// 1. Hard cleanup of K8s resources
+	h.cleanupK8s(c.Context(), job)
+
+	// 2. Delete from DB (cascades to tasks)
+	if err := h.queries.DeleteJob(c.Context(), jobID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not delete job"})
+	}
+
+	h.log.Info("job deleted", zap.String("job_id", jobID.String()))
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+func (h *JobHandler) cleanupK8s(ctx context.Context, job db.Job) {
+	shortID := job.JobID.String()
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+	_ = h.dispatcher.DeleteJob(ctx, fmt.Sprintf("build-map-%s", shortID))
+	_ = h.dispatcher.DeleteJob(ctx, fmt.Sprintf("build-red-%s", shortID))
+
+	mapJobNames, _ := h.queries.GetMapTaskJobNames(ctx, job.JobID)
+	for _, name := range mapJobNames {
+		if name.Valid {
+			_ = h.dispatcher.DeleteJob(ctx, name.String)
+		}
+	}
+
+	redJobNames, _ := h.queries.GetReduceTaskJobNames(ctx, job.JobID)
+	for _, name := range redJobNames {
+		if name.Valid {
+			_ = h.dispatcher.DeleteJob(ctx, name.String)
+		}
+	}
+}
+
+
 // GetJobOutput handles GET /jobs/:id/output.
 // Returns the MinIO object paths of the completed reduce task outputs.
 func (h *JobHandler) GetJobOutput(c fiber.Ctx) error {
@@ -227,6 +299,62 @@ func (h *JobHandler) GetJobOutput(c fiber.Ctx) error {
 		"job_id":       jobID,
 		"output_paths": paths,
 	})
+}
+
+// GetJobProgress handles GET /jobs/:id/progress.
+// Returns task-level completion counts for progress tracking.
+func (h *JobHandler) GetJobProgress(c fiber.Ctx) error {
+	jobID, err := parseJobID(c)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	job, err := h.queries.GetJob(c.Context(), jobID)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			h.log.Warn("get job progress: job not found", zap.String("job_id", jobID.String()))
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "job not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not get job"})
+	}
+
+	if err := assertAccess(c, job); err != nil {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	resp := progressResponse{
+		JobID:       jobID.String(),
+		Status:      job.Status,
+		NumMappers:  job.NumMappers,
+		NumReducers: job.NumReducers,
+	}
+
+	// Only query task counts when tasks exist.
+	switch job.Status {
+	case "MAP_PHASE", "REDUCE_PHASE", "COMPLETED", "FAILED":
+		mapCounts, err := h.queries.CountMapTasksByStatus(c.Context(), jobID)
+		if err == nil {
+			resp.MapProgress = &taskProgress{
+				Completed: mapCounts.Completed,
+				Failed:    mapCounts.Failed,
+				Total:     mapCounts.Total,
+			}
+		}
+	}
+
+	switch job.Status {
+	case "REDUCE_PHASE", "COMPLETED", "FAILED":
+		redCounts, err := h.queries.CountReduceTasksByStatus(c.Context(), jobID)
+		if err == nil {
+			resp.ReduceProgress = &taskProgress{
+				Completed: redCounts.Completed,
+				Failed:    redCounts.Failed,
+				Total:     redCounts.Total,
+			}
+		}
+	}
+
+	return c.JSON(resp)
 }
 
 // AdminListJobs handles GET /admin/jobs — returns all jobs.

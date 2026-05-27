@@ -144,6 +144,7 @@ func main() {
 	api.Delete("/jobs/:id", jobHandler.DeleteJob)
 	api.Post("/jobs/:id/cancel", jobHandler.CancelJob)
 	api.Get("/jobs/:id/output", jobHandler.GetJobOutput)
+	api.Get("/jobs/:id/progress", jobHandler.GetJobProgress)
 
 	// Admin: all jobs regardless of owner
 	api.Get("/admin/jobs", jobHandler.AdminListJobs)

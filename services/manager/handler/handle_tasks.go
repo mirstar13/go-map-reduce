@@ -7,10 +7,12 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 	"github.com/sqlc-dev/pqtype"
 	"go.uber.org/zap"
 
 	"github.com/mirstar13/go-map-reduce/db"
+	"github.com/mirstar13/go-map-reduce/services/manager/config"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 )
 
@@ -24,12 +26,20 @@ import (
 type TaskHandler struct {
 	queries  db.Querier
 	registry *supervisor.Registry
+	minio    *minio.Client
+	cfg      *config.Config
 	log      *zap.Logger
 }
 
 // NewTaskHandler creates a TaskHandler.
-func NewTaskHandler(queries db.Querier, registry *supervisor.Registry, log *zap.Logger) *TaskHandler {
-	return &TaskHandler{queries: queries, registry: registry, log: log}
+func NewTaskHandler(queries db.Querier, registry *supervisor.Registry, minio *minio.Client, cfg *config.Config, log *zap.Logger) *TaskHandler {
+	return &TaskHandler{
+		queries:  queries,
+		registry: registry,
+		minio:    minio,
+		cfg:      cfg,
+		log:      log,
+	}
 }
 
 // mapCompleteRequest is the body sent by a map worker on success.
@@ -194,6 +204,108 @@ func (h *TaskHandler) FailReduceTask(c fiber.Ctx) error {
 
 	h.registry.Notify(task.JobID)
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// buildCompleteRequest is the body sent by a builder on success.
+type buildCompleteRequest struct {
+	PluginType string `json:"plugin_type"` // "mapper" | "reducer"
+	PluginPath string `json:"plugin_path"`
+}
+
+// CompleteBuild handles POST /builds/:id/complete.
+func (h *TaskHandler) CompleteBuild(c fiber.Ctx) error {
+	jobID, err := parseTaskID(c) // using parseTaskID as it just parses a UUID from :id
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	var req buildCompleteRequest
+	if err := c.Bind().JSON(&req); err != nil || req.PluginPath == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "plugin_type and plugin_path are required",
+		})
+	}
+
+	// Update the mapper/reducer path to the compiled binary.
+	// We use a custom SQL query for this or just UpdateJobStatus if we added those fields.
+	// Since we don't have a specific UpdateJobPaths, let's use a raw update for now or add it to queries.
+	// For simplicity, let's assume we can update the job.
+	// I'll check if there's an update query I can use.
+	
+	err = h.updateJobPath(c, jobID, req.PluginType, req.PluginPath)
+	if err != nil {
+		h.log.Error("failed to update job path", zap.Error(err), zap.String("job_id", jobID.String()))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not update job path"})
+	}
+
+	// 2. Cache the result for future use.
+	job, err := h.queries.GetJob(c.Context(), jobID)
+	if err == nil && h.minio != nil {
+		sourcePath := job.MapperPath
+		if req.PluginType == "reducer" {
+			sourcePath = job.ReducerPath
+		}
+		info, err := h.minio.StatObject(c.Context(), h.cfg.MinioBucketCode, sourcePath, minio.StatObjectOptions{})
+		if err == nil {
+			err = h.queries.UpsertCachedPlugin(c.Context(), db.UpsertCachedPluginParams{
+				SourceHash: info.ETag,
+				BinaryPath: req.PluginPath,
+			})
+			if err != nil {
+				h.log.Warn("failed to cache plugin", zap.Error(err), zap.String("hash", info.ETag))
+			} else {
+				h.log.Info("plugin cached", zap.String("type", req.PluginType), zap.String("hash", info.ETag))
+			}
+		}
+	}
+
+	h.log.Info("build completed",
+		zap.String("job_id", jobID.String()),
+		zap.String("type", req.PluginType),
+		zap.String("path", req.PluginPath),
+	)
+
+	h.registry.Notify(jobID)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+// FailBuild handles POST /builds/:id/fail.
+func (h *TaskHandler) FailBuild(c fiber.Ctx) error {
+	jobID, err := parseTaskID(c)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	var req struct {
+		Error string `json:"error"`
+	}
+	_ = c.Bind().JSON(&req)
+
+	err = h.queries.FailJob(c.Context(), db.FailJobParams{
+		JobID:        jobID,
+		ErrorMessage: sql.NullString{String: fmt.Sprintf("build failed: %s", req.Error), Valid: true},
+	})
+	if err != nil {
+		h.log.Error("failed to mark job as failed", zap.Error(err), zap.String("job_id", jobID.String()))
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not fail job"})
+	}
+
+	h.log.Warn("build failed", zap.String("job_id", jobID.String()), zap.String("error", req.Error))
+	h.registry.Notify(jobID)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+}
+
+func (h *TaskHandler) updateJobPath(c fiber.Ctx, id uuid.UUID, pType string, path string) error {
+	if pType == "mapper" {
+		return h.queries.UpdateJobMapperPath(c.Context(), db.UpdateJobMapperPathParams{
+			JobID:      id,
+			MapperPath: path,
+		})
+	}
+	return h.queries.UpdateJobReducerPath(c.Context(), db.UpdateJobReducerPathParams{
+		JobID:       id,
+		ReducerPath: path,
+	})
 }
 
 func parseTaskID(c fiber.Ctx) (uuid.UUID, error) {

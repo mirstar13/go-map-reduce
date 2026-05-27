@@ -25,12 +25,14 @@ import (
 func newTaskApp(t *testing.T, q db.Querier) *fiber.App {
 	t.Helper()
 	reg := supervisor.NewRegistry()
-	h := NewTaskHandler(q, reg, zap.NewNop())
+	h := NewTaskHandler(q, reg, nil, nil, zap.NewNop())
 	app := fiber.New()
 	app.Post("/tasks/map/:id/complete", h.CompleteMapTask)
 	app.Post("/tasks/map/:id/fail", h.FailMapTask)
 	app.Post("/tasks/reduce/:id/complete", h.CompleteReduceTask)
 	app.Post("/tasks/reduce/:id/fail", h.FailReduceTask)
+	app.Post("/builds/:id/complete", h.CompleteBuild)
+	app.Post("/builds/:id/fail", h.FailBuild)
 	return app
 }
 
@@ -38,13 +40,62 @@ func newTaskApp(t *testing.T, q db.Querier) *fiber.App {
 // allowing tests that verify Notify is called.
 func newTaskAppWithRegistry(t *testing.T, q db.Querier, reg *supervisor.Registry) *fiber.App {
 	t.Helper()
-	h := NewTaskHandler(q, reg, zap.NewNop())
+	h := NewTaskHandler(q, reg, nil, nil, zap.NewNop())
 	app := fiber.New()
 	app.Post("/tasks/map/:id/complete", h.CompleteMapTask)
 	app.Post("/tasks/map/:id/fail", h.FailMapTask)
 	app.Post("/tasks/reduce/:id/complete", h.CompleteReduceTask)
 	app.Post("/tasks/reduce/:id/fail", h.FailReduceTask)
+	app.Post("/builds/:id/complete", h.CompleteBuild)
+	app.Post("/builds/:id/fail", h.FailBuild)
 	return app
+}
+
+func TestCompleteBuild_Success(t *testing.T) {
+	jobID := uuid.New()
+	job := db.Job{JobID: jobID, MapperPath: "code/m.go"}
+
+	q := &mockQuerier{
+		getJobFn: func(_ context.Context, id uuid.UUID) (db.Job, error) {
+			assert.Equal(t, jobID, id)
+			return job, nil
+		},
+		updateJobMapperPathFn: func(_ context.Context, arg db.UpdateJobMapperPathParams) error {
+			assert.Equal(t, jobID, arg.JobID)
+			assert.Equal(t, "builds/abc/m", arg.MapperPath)
+			return nil
+		},
+		upsertCachedPluginFn: func(_ context.Context, arg db.UpsertCachedPluginParams) error {
+			return nil
+		},
+	}
+
+	app := newTaskApp(t, q)
+	resp := doTaskRequest(t, app, "/builds/"+jobID.String()+"/complete", map[string]interface{}{
+		"plugin_type": "mapper",
+		"plugin_path": "builds/abc/m",
+	})
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func TestFailBuild_Success(t *testing.T) {
+	jobID := uuid.New()
+	var capturedParams db.FailJobParams
+	q := &mockQuerier{
+		failJobFn: func(_ context.Context, arg db.FailJobParams) error {
+			capturedParams = arg
+			return nil
+		},
+	}
+	app := newTaskApp(t, q)
+	resp := doTaskRequest(t, app, "/builds/"+jobID.String()+"/fail", map[string]interface{}{
+		"error": "compilation error: syntax error",
+	})
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, jobID, capturedParams.JobID)
+	assert.Contains(t, capturedParams.ErrorMessage.String, "compilation error")
 }
 
 // doTaskRequest sends a JSON POST to app.Test.

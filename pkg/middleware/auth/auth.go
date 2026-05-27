@@ -3,6 +3,7 @@ package auth
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/golang-jwt/jwt/v5"
@@ -118,7 +119,7 @@ func parseAndVerify(rawToken string, cache *jwks.Cache, expectedIssuer string, e
 		}
 
 		return cache.PublicKey(kid)
-	}, jwt.WithExpirationRequired(), jwt.WithIssuedAt())
+	}, jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithLeeway(2 * time.Minute))
 
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)

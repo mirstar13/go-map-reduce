@@ -19,6 +19,7 @@ type Splitter interface {
 type Dispatcher interface {
 	DispatchMap(ctx context.Context, spec dispatcher.MapTaskSpec) (string, error)
 	DispatchReduce(ctx context.Context, spec dispatcher.ReduceTaskSpec) (string, error)
+	DispatchBuild(ctx context.Context, spec dispatcher.BuildTaskSpec) (string, error)
 	DeleteJob(ctx context.Context, jobName string) error
 }
 

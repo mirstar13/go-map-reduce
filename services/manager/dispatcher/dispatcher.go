@@ -138,6 +138,10 @@ func (d *Dispatcher) DispatchBuild(ctx context.Context, spec BuildTaskSpec) (str
 		{Name: "OUTPUT_PATH", Value: spec.OutputPath},
 		{Name: "MANAGER_URL", Value: d.cfg.ManagerURL},
 		{Name: "MINIO_BUCKET_CODE", Value: d.cfg.MinioBucketCode},
+		{Name: "HOME", Value: "/tmp"},
+		{Name: "GOCACHE", Value: "/tmp/go-cache"},
+		{Name: "GOMODCACHE", Value: "/tmp/go-mod"},
+		{Name: "GOPATH", Value: "/tmp/go"},
 		d.minioEndpointVar(),
 		d.minioAccessKeyVar(),
 		d.minioSecretKeyVar(),
@@ -153,7 +157,7 @@ func (d *Dispatcher) DispatchBuild(ctx context.Context, spec BuildTaskSpec) (str
 	runAsUser := int64(1000)
 	fsGroup := int64(1000)
 	allowPrivilegeEscalation := false
-	readOnlyRootFilesystem := true
+	readOnlyRootFilesystem := false
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
