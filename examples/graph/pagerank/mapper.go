@@ -60,5 +60,34 @@ func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
 	return records, nil
 }
 
+func (m *MapperImpl) Combine(key string, values []string) ([]plugin.Record, error) {
+	var totalRank float64
+	var structure string
+
+	for _, v := range values {
+		if strings.HasPrefix(v, "S:") {
+			structure = v
+		} else {
+			var rank float64
+			_, err := fmt.Sscanf(v, "%f", &rank)
+			if err == nil {
+				totalRank += rank
+			}
+		}
+	}
+
+	var records []plugin.Record
+	if structure != "" {
+		records = append(records, plugin.Record{Key: key, Value: structure})
+	}
+	if totalRank > 0 || len(values) > 0 {
+		records = append(records, plugin.Record{Key: key, Value: fmt.Sprintf("%f", totalRank)})
+	}
+	return records, nil
+}
+
 // Mapper is the exported symbol that the worker loads.
-var Mapper plugin.Mapper = &MapperImpl{}
+var Mapper interface {
+	plugin.Mapper
+	plugin.Combiner
+} = &MapperImpl{}
