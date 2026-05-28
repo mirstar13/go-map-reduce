@@ -29,7 +29,7 @@ data:
   WORKER_NAMESPACE:       "mapreduce"
   WORKER_IMAGE:           "starpal/mapreduce-worker:latest"
   BUILDER_IMAGE:          "starpal/mapreduce-builder:latest"
-  TASK_TIMEOUT_SECONDS:   "300"
+  TASK_TIMEOUT_SECONDS:   "900"
   TASK_MAX_RETRIES:       "3"
 
   #  Auth / UI Service

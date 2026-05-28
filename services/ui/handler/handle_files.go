@@ -2,6 +2,8 @@ package handler
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -49,11 +51,6 @@ func (h *FileHandler) DownloadFile(c fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file not found or inaccessible"})
 	}
 
-	// In Fiber v3, SendStream will read until EOF. 
-	// To ensure the reader is closed after streaming, we can wrap it or trust Fiber
-	// if it's a blocking call. If it's non-blocking, we need to be careful.
-	// However, the 502 suggests the connection was dropped.
-	// Let's set the content type and stream it.
 	c.Set(fiber.HeaderContentType, "text/plain")
 	return c.SendStream(reader)
 }
@@ -61,7 +58,7 @@ func (h *FileHandler) DownloadFile(c fiber.Ctx) error {
 // streamUpload uses a multipart reader to stream the file directly to MinIO
 // without buffering the entire body in memory.
 func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
-	h.log.Info("streamUpload started", zap.String("kind", kind), zap.String("content-type", string(c.Request().Header.ContentType())))
+	h.log.Info("streamUpload started", zap.String("kind", kind))
 	contentType := string(c.Request().Header.ContentType())
 	if !strings.HasPrefix(contentType, "multipart/form-data") {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -69,7 +66,6 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 		})
 	}
 
-	// Correctly parse media type to get the boundary parameter.
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -83,17 +79,15 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 		})
 	}
 
-	// We use the underlying fasthttp request context to access the body stream.
-	// This requires StreamRequestBody: true in Fiber config.
 	bodyReader := c.RequestCtx().RequestBodyStream()
 	if bodyReader == nil {
 		bodyReader = bytes.NewReader(c.Request().Body())
 	}
+
 	reader := multipart.NewReader(bodyReader, boundary)
 
 	var (
 		objectPath string
-		uploadErr  error
 		created    bool
 	)
 
@@ -103,52 +97,36 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 			break
 		}
 		if err != nil {
-			h.log.Error("upload: read next part", zap.Error(err))
-			if !created {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"error": "failed to parse multipart form",
-				})
+			h.log.Error("upload: next part error", zap.Error(err), zap.String("kind", kind))
+			if err == io.ErrUnexpectedEOF {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "client disconnected prematurely"})
 			}
-			break
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "failed to parse upload stream"})
 		}
 
 		if part.FormName() == "file" && !created {
 			filename := part.FileName()
 			if filename == "" {
 				part.Close()
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"error": "no filename provided in 'file' part",
-				})
+				continue
 			}
 
-			// Determine the size if possible.
-			size := int64(-1)
+			h.log.Info("uploading part", zap.String("filename", filename), zap.String("kind", kind))
 
-			switch kind {
-			case "input":
-				objectPath, uploadErr = h.minio.UploadInput(c.Context(), filename, part, size)
-			case "code":
-				objectPath, uploadErr = h.minio.UploadCode(c.Context(), filename, part, size)
-			}
-
-			if uploadErr != nil {
-				h.log.Error("upload: store to minio", zap.String("kind", kind), zap.Error(uploadErr))
+			path, err := h.uploadToMinio(c.Context(), kind, filename, part)
+			if err != nil {
+				h.log.Error("upload: minio error", zap.String("kind", kind), zap.Error(err))
 				part.Close()
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-					"error": "failed to store file",
-				})
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to store file"})
 			}
+			objectPath = path
 			created = true
 		}
 		part.Close()
 	}
 
 	if created {
-		h.log.Info("file uploaded (streamed)",
-			zap.String("kind", kind),
-			zap.String("path", objectPath),
-		)
-
+		h.log.Info("file upload successful", zap.String("kind", kind), zap.String("path", objectPath))
 		bucket := map[string]string{"input": "input", "code": "code"}[kind]
 		return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 			"path":   objectPath,
@@ -156,7 +134,16 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 		})
 	}
 
-	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-		"error": "no 'file' field found in form",
-	})
+	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "no file found in request"})
+}
+
+func (h *FileHandler) uploadToMinio(ctx context.Context, kind, filename string, r io.Reader) (string, error) {
+	switch kind {
+	case "input":
+		return h.minio.UploadInput(ctx, filename, r, -1)
+	case "code":
+		return h.minio.UploadCode(ctx, filename, r, -1)
+	default:
+		return "", fmt.Errorf("invalid upload kind: %s", kind)
+	}
 }

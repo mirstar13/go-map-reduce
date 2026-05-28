@@ -282,7 +282,7 @@ metadata:
     role: replica
 spec:
   serviceName: postgres-replica
-  replicas: 1
+  replicas: 0
   selector:
     matchLabels:
       app: postgres

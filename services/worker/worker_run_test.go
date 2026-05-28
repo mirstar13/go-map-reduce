@@ -134,7 +134,7 @@ func TestRunMap(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	log := zap.NewNop()
+	log, _ := zap.NewDevelopment()
 
 	w := &worker{
 		cfg: &config.Config{
@@ -226,7 +226,7 @@ func TestRunReduce(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	log := zap.NewNop()
+	log, _ := zap.NewDevelopment()
 
 	w := &worker{
 		cfg: &config.Config{

@@ -77,12 +77,7 @@ func (m *MapperRPCClient) Map(key, value string) ([]Record, error) {
 }
 
 func (m *MapperRPCClient) Combine(key string, values []string) ([]Record, error) {
-	if combiner, ok := m.client.Service.(Combiner); ok {
-		return combiner.Combine(key, values)
-	}
-
-	// Combiner is optional. If not natively supported by the RPC service, 
-	// we check if the server implementation actually has the method.
+	// Combiner is optional. We check if the server implementation actually has the method.
 	var reply ReduceReply // Re-use ReduceReply for Combine
 	err := m.client.Call("Plugin.Combine", &ReduceArgs{Key: key, Values: values}, &reply)
 	if err != nil {

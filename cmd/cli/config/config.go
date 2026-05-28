@@ -47,9 +47,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
 
-	// Default to 10 if not set.
+	// Default to 64 if not set.
 	if cfg.MapperThresholdMB <= 0 {
-		cfg.MapperThresholdMB = 10
+		cfg.MapperThresholdMB = 64
 	}
 	return &cfg, nil
 }

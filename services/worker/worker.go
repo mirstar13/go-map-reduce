@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"container/heap"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -92,7 +95,7 @@ type worker struct {
 // runMap executes a map task:
 // 1. Download compiled mapper plugin from MinIO
 // 2. Download input data (byte range) from MinIO
-// 3. Execute mapper plugin, partition output by reducer
+// 3. Execute mapper plugin, partition output by reducer and stream to disk
 // 4. Upload partitioned output to MinIO
 // 5. Report completion to Manager
 func (w *worker) runMap(ctx context.Context) error {
@@ -116,67 +119,141 @@ func (w *worker) runMap(ctx context.Context) error {
 	}
 	defer cleanup()
 
-	// Download input data with byte range
-	inputData, err := w.downloadInputRange(ctx)
+	// Open input data split for streaming
+	inputObj, err := w.openInputRange(ctx)
 	if err != nil {
-		return fmt.Errorf("download input: %w", err)
+		return fmt.Errorf("open input: %w", err)
 	}
+	defer inputObj.Close()
 
-	// Execute mapper on each input line
-	var allOutputs []plugin.Record
-	lines := bytes.Split(inputData, []byte("\n"))
-	for i, line := range lines {
-		if len(line) == 0 {
-			continue
+	// Create local partitioned files to avoid keeping all results in RAM
+	partitionFiles := make(map[int]*os.File)
+	partitionWriters := make(map[int]*bufio.Writer)
+	defer func() {
+		for _, f := range partitionFiles {
+			f.Close()
+			os.Remove(f.Name())
 		}
-		key := fmt.Sprintf("%d", w.cfg.InputSpec.Offset+int64(i))
-		records, err := mapper.Map(key, string(line))
+	}()
+
+	// Helper to get or create a partitioned file
+	getPartitionWriter := func(reducerIdx int) (*bufio.Writer, error) {
+		if pw, ok := partitionWriters[reducerIdx]; ok {
+			return pw, nil
+		}
+		f, err := os.CreateTemp(w.tmpDir, fmt.Sprintf("map-p%d-", reducerIdx))
 		if err != nil {
-			return fmt.Errorf("mapper.Map failed at line %d: %w", i, err)
+			return nil, err
 		}
-		allOutputs = append(allOutputs, records...)
+		partitionFiles[reducerIdx] = f
+		pw := bufio.NewWriter(f)
+		partitionWriters[reducerIdx] = pw
+		return pw, nil
 	}
 
-	// Apply optional Combiner if implemented
-	if combiner, ok := mapper.(plugin.Combiner); ok {
-		w.log.Info("applying combiner for local aggregation")
-		groups := make(map[string][]string)
-		for _, r := range allOutputs {
-			groups[r.Key] = append(groups[r.Key], r.Value)
-		}
-
-		var combinedOutputs []plugin.Record
-		for key, values := range groups {
-			records, err := combiner.Combine(key, values)
-			if err != nil {
-				w.log.Warn("combiner failed; using raw map output", zap.String("key", key), zap.Error(err))
-				// If combiner fails for a key, we fall back to raw values for that key
-				for _, v := range values {
-					combinedOutputs = append(combinedOutputs, plugin.Record{Key: key, Value: v})
-				}
-				continue
-			}
-			combinedOutputs = append(combinedOutputs, records...)
-		}
-		allOutputs = combinedOutputs
-	}
-
-	// Partition output by reducer
-	partitions := w.partitionRecordsByReducer(allOutputs)
-
-	// Upload partitions and collect output locations
-	outputLocations := make([]outputLocation, 0, len(partitions))
-	for reducerIdx, records := range partitions {
-		if len(records) == 0 {
+	// Execute mapper on each input line via streaming
+	scanner := bufio.NewScanner(inputObj)
+	lineCount := 0
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
 			continue
 		}
-		path, err := w.uploadRecordPartition(ctx, reducerIdx, records)
+		
+		key := fmt.Sprintf("%d", w.cfg.InputSpec.Offset+int64(lineCount))
+		records, err := mapper.Map(key, line)
+		if err != nil {
+			return fmt.Errorf("mapper.Map failed at line %d: %w", lineCount, err)
+		}
+
+		for _, r := range records {
+			reducerIdx := w.hashKey(r.Key) % w.cfg.NumReducers
+			pw, err := getPartitionWriter(reducerIdx)
+			if err != nil {
+				return fmt.Errorf("get partition writer: %w", err)
+			}
+			fmt.Fprintf(pw, "%s\t%s\n", r.Key, r.Value)
+		}
+		
+		lineCount++
+		if lineCount%100000 == 0 {
+			w.log.Info("map progress", zap.Int("lines_processed", lineCount))
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("scanner error: %w", err)
+	}
+
+	// Flush all partition writers
+	for _, pw := range partitionWriters {
+		if err := pw.Flush(); err != nil {
+			return fmt.Errorf("flush partition writer: %w", err)
+		}
+	}
+
+	// Apply Combiner if implemented
+	var combiner plugin.Combiner
+	if c, ok := mapper.(plugin.Combiner); ok {
+		combiner = c
+		w.log.Info("combiner detected; will perform local aggregation")
+	}
+
+	// Upload each partition file to MinIO (potentially after combining)
+	outputLocations := make([]outputLocation, 0, len(partitionFiles))
+	for reducerIdx, f := range partitionFiles {
+		var uploadReader io.Reader
+		var uploadSize int64
+		var combinedFile string
+		var isCombined bool
+
+		if combiner != nil {
+			// Sort the partition locally and combine
+			cFile, err := w.sortAndCombine(f.Name(), combiner)
+			if err != nil {
+				if err.Error() == "combiner not implemented" {
+					w.log.Debug("combiner not implemented by plugin, falling back to raw output")
+					combiner = nil // stop trying for future partitions
+				} else {
+					return fmt.Errorf("sort and combine partition %d: %w", reducerIdx, err)
+				}
+			} else {
+				combinedFile = cFile
+				isCombined = true
+			}
+		}
+
+		if isCombined {
+			defer os.Remove(combinedFile)
+			cf, err := os.Open(combinedFile)
+			if err != nil {
+				return fmt.Errorf("open combined partition %d: %w", reducerIdx, err)
+			}
+			defer cf.Close()
+			stat, _ := cf.Stat()
+			uploadReader = cf
+			uploadSize = stat.Size()
+		} else {
+			if _, err := f.Seek(0, 0); err != nil {
+				return fmt.Errorf("seek partition %d: %w", reducerIdx, err)
+			}
+			stat, _ := f.Stat()
+			uploadReader = f
+			uploadSize = stat.Size()
+		}
+
+		objectKey := fmt.Sprintf("%s/map-%d-reduce-%d.txt", w.cfg.JobID, w.cfg.TaskIndex, reducerIdx)
+		_, err := w.minio.PutObject(ctx, w.cfg.MinioBucketJobs, objectKey,
+			uploadReader, uploadSize,
+			minio.PutObjectOptions{ContentType: "text/plain"},
+		)
 		if err != nil {
 			return fmt.Errorf("upload partition %d: %w", reducerIdx, err)
 		}
+
 		outputLocations = append(outputLocations, outputLocation{
 			ReducerIndex: reducerIdx,
-			Path:         path,
+			Path:         objectKey,
 		})
 	}
 
@@ -184,12 +261,83 @@ func (w *worker) runMap(ctx context.Context) error {
 	return w.reportMapComplete(ctx, outputLocations)
 }
 
+// sortAndCombine sorts a partition file and applies the combiner.
+func (w *worker) sortAndCombine(path string, combiner plugin.Combiner) (string, error) {
+	sortedPath, err := w.externalSort(path)
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(sortedPath)
+
+	sf, err := os.Open(sortedPath)
+	if err != nil {
+		return "", err
+	}
+	defer sf.Close()
+
+	output, err := os.CreateTemp(w.tmpDir, "combined-")
+	if err != nil {
+		return "", err
+	}
+	defer output.Close()
+
+	scanner := bufio.NewScanner(sf)
+	var currentKey string
+	var currentValues []string
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		key := parts[0]
+		val := ""
+		if len(parts) > 1 {
+			val = parts[1]
+		}
+
+		if key != currentKey && len(currentValues) > 0 {
+			records, err := combiner.Combine(currentKey, currentValues)
+			if err != nil {
+				// If the plugin specifically says it's not implemented, we return a wrapped error
+				// that we can detect to stop trying to combine.
+				if strings.Contains(err.Error(), "not implemented") {
+					return "", fmt.Errorf("combiner not implemented")
+				}
+				return "", fmt.Errorf("combiner failed for key %q: %w", currentKey, err)
+			}
+			for _, r := range records {
+				fmt.Fprintf(output, "%s\t%s\n", r.Key, r.Value)
+			}
+			currentValues = nil
+		}
+		currentKey = key
+		currentValues = append(currentValues, val)
+	}
+
+	if len(currentValues) > 0 {
+		records, err := combiner.Combine(currentKey, currentValues)
+		if err != nil {
+			if strings.Contains(err.Error(), "not implemented") {
+				return "", fmt.Errorf("combiner not implemented")
+			}
+			return "", fmt.Errorf("combiner failed for key %q: %w", currentKey, err)
+		}
+		for _, r := range records {
+			fmt.Fprintf(output, "%s\t%s\n", r.Key, r.Value)
+		}
+	}
+
+	return output.Name(), nil
+}
+
 // runReduce executes a reduce task:
 // 1. Download compiled reducer plugin from MinIO
-// 2. Download all input partitions from MinIO to local temp files
-// 3. Perform an external merge sort to handle large datasets
-// 4. Group by key and execute reducer
-// 5. Upload final output to MinIO
+// 2. Download all input partitions from MinIO to a local temp file
+// 3. Perform a Pure Go external merge sort to handle large datasets within 512Mi RAM
+// 4. Stream sorted records, group by key, and execute reducer
+// 5. Stream final output directly to MinIO
 func (w *worker) runReduce(ctx context.Context) error {
 	w.log.Info("starting reduce task",
 		zap.Int("input_locations", len(w.cfg.InputLocations)),
@@ -209,62 +357,90 @@ func (w *worker) runReduce(ctx context.Context) error {
 	}
 	defer cleanup()
 
-	// External Sort Phase: Download all partitions to a single local file
-	sortFile := filepath.Join(w.tmpDir, fmt.Sprintf("reduce-%d-sort.txt", w.cfg.TaskIndex))
-	sf, err := os.Create(sortFile)
+	// Phase 1: Download all partitions to a single local file
+	rawFile := filepath.Join(w.tmpDir, fmt.Sprintf("reduce-%d-raw.txt", w.cfg.TaskIndex))
+	rf, err := os.Create(rawFile)
 	if err != nil {
-		return fmt.Errorf("create sort file: %w", err)
+		return fmt.Errorf("create raw file: %w", err)
 	}
+	defer os.Remove(rawFile)
 
-	for _, loc := range w.cfg.InputLocations {
+	for i, loc := range w.cfg.InputLocations {
 		obj, err := w.minio.GetObject(ctx, w.cfg.MinioBucketJobs, loc.Path, minio.GetObjectOptions{})
 		if err != nil {
-			sf.Close()
+			rf.Close()
 			return fmt.Errorf("get object %s: %w", loc.Path, err)
 		}
-		if _, err := io.Copy(sf, obj); err != nil {
+		if _, err := io.Copy(rf, obj); err != nil {
 			obj.Close()
-			sf.Close()
+			rf.Close()
 			return fmt.Errorf("copy partition %s: %w", loc.Path, err)
 		}
 		obj.Close()
-	}
-	sf.Close()
 
-	// Simple external sort: Read, sort in-memory (still a bottleneck, but better managed), write back
-	// In a real production system, this would be a multi-pass merge sort.
-	data, err := os.ReadFile(sortFile)
+		if (i+1)%100 == 0 {
+			w.log.Info("reduce download progress", zap.Int("partitions_downloaded", i+1))
+		}
+	}
+	rf.Close()
+
+	// Phase 2: Perform Pure Go External Merge Sort
+	w.log.Info("starting external sort")
+	sortedFile, err := w.externalSort(rawFile)
 	if err != nil {
-		return fmt.Errorf("read sort file: %w", err)
+		return fmt.Errorf("external sort: %w", err)
 	}
-	lines := bytes.Split(data, []byte("\n"))
-	sort.Slice(lines, func(i, j int) bool {
-		return bytes.Compare(lines[i], lines[j]) < 0
-	})
+	defer os.Remove(sortedFile)
 
-	// Process groups from sorted data
+	// Phase 3: Group by key and stream to Reducer
+	w.log.Info("streaming sorted data to reducer")
+	sf, err := os.Open(sortedFile)
+	if err != nil {
+		return fmt.Errorf("open sorted file: %w", err)
+	}
+	defer sf.Close()
+
+	// Create local output file to avoid multipart upload issues and track size
+	outFile := filepath.Join(w.tmpDir, fmt.Sprintf("reduce-%d-out.txt", w.cfg.TaskIndex))
+	of, err := os.Create(outFile)
+	if err != nil {
+		return fmt.Errorf("create output file: %w", err)
+	}
+	defer os.Remove(outFile)
+	bw := bufio.NewWriter(of)
+
+	scanner := bufio.NewScanner(sf)
 	var currentKey string
 	var currentValues []string
-	var results []plugin.Record
+	lineCount := 0
 
-	for _, line := range lines {
-		if len(line) == 0 {
+	for scanner.Scan() {
+		line := scanner.Text()
+		lineCount++
+		if line == "" {
 			continue
 		}
-		parts := bytes.SplitN(line, []byte("\t"), 2)
-		key := string(parts[0])
+		parts := strings.SplitN(line, "\t", 2)
+		key := parts[0]
 		val := ""
 		if len(parts) > 1 {
-			val = string(parts[1])
+			val = parts[1]
 		}
 
 		if key != currentKey && len(currentValues) > 0 {
 			records, err := reducer.Reduce(currentKey, currentValues)
 			if err != nil {
+				of.Close()
 				return fmt.Errorf("reducer.Reduce failed for key %q: %w", currentKey, err)
 			}
-			results = append(results, records...)
+			for _, r := range records {
+				fmt.Fprintf(bw, "%s\t%s\n", r.Key, r.Value)
+			}
 			currentValues = nil
+
+			if lineCount%100000 == 0 {
+				w.log.Info("reduce progress", zap.Int("lines_processed", lineCount))
+			}
 		}
 		currentKey = key
 		currentValues = append(currentValues, val)
@@ -274,27 +450,165 @@ func (w *worker) runReduce(ctx context.Context) error {
 	if len(currentValues) > 0 {
 		records, err := reducer.Reduce(currentKey, currentValues)
 		if err != nil {
+			of.Close()
 			return fmt.Errorf("reducer.Reduce failed for key %q: %w", currentKey, err)
 		}
-		results = append(results, records...)
+		for _, r := range records {
+			fmt.Fprintf(bw, "%s\t%s\n", r.Key, r.Value)
+		}
 	}
 
-	// Upload final output
-	outputPath, err := w.uploadReduceOutput(ctx, results)
+	if err := bw.Flush(); err != nil {
+		of.Close()
+		return fmt.Errorf("flush output writer: %w", err)
+	}
+	stat, _ := of.Stat()
+	of.Seek(0, 0)
+
+	// Upload to MinIO
+	objectKey := fmt.Sprintf("%s/part-%d.txt", w.cfg.JobID, w.cfg.TaskIndex)
+	_, err = w.minio.PutObject(ctx, w.cfg.MinioBucketOutput, objectKey,
+		of, stat.Size(),
+		minio.PutObjectOptions{ContentType: "text/plain"},
+	)
+	of.Close()
 	if err != nil {
-		return fmt.Errorf("upload output: %w", err)
+		return fmt.Errorf("upload results: %w", err)
 	}
 
-	return w.reportReduceComplete(ctx, outputPath)
+	return w.reportReduceComplete(ctx, objectKey)
 }
 
-// groupByKey groups records by their key, returning a map of key -> values.
-func groupByKey(records []keyValue) map[string][]string {
-	groups := make(map[string][]string)
-	for _, r := range records {
-		groups[r.Key] = append(groups[r.Key], r.Value)
+// externalSort implements a multi-pass merge sort to handle large files.
+func (w *worker) externalSort(inputFile string) (string, error) {
+	const chunkSize = 64 * 1024 * 1024 // 64MB chunks for 512MB RAM
+	f, err := os.Open(inputFile)
+	if err != nil {
+		return "", err
 	}
-	return groups
+	defer f.Close()
+
+	var chunks []string
+	scanner := bufio.NewScanner(f)
+	var currentChunk []string
+	var currentSize int
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		currentChunk = append(currentChunk, line)
+		currentSize += len(line)
+
+		if currentSize >= chunkSize {
+			chunkFile, err := w.sortAndSaveChunk(currentChunk)
+			if err != nil {
+				return "", err
+			}
+			chunks = append(chunks, chunkFile)
+			currentChunk = nil
+			currentSize = 0
+		}
+	}
+
+	if len(currentChunk) > 0 {
+		chunkFile, err := w.sortAndSaveChunk(currentChunk)
+		if err != nil {
+			return "", err
+		}
+		chunks = append(chunks, chunkFile)
+	}
+
+	if len(chunks) == 0 {
+		emptyFile := filepath.Join(w.tmpDir, "sorted-empty.txt")
+		_ = os.WriteFile(emptyFile, []byte{}, 0644)
+		return emptyFile, nil
+	}
+
+	if len(chunks) == 1 {
+		return chunks[0], nil
+	}
+
+	return w.mergeChunks(chunks)
+}
+
+func (w *worker) sortAndSaveChunk(lines []string) (string, error) {
+	sort.Strings(lines)
+	f, err := os.CreateTemp(w.tmpDir, "chunk-")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	for _, line := range lines {
+		fmt.Fprintln(f, line)
+	}
+	return f.Name(), nil
+}
+
+type mergeItem struct {
+	line    string
+	scanner *bufio.Scanner
+	file    *os.File
+}
+
+type mergeHeap []*mergeItem
+
+func (h mergeHeap) Len() int           { return len(h) }
+func (h mergeHeap) Less(i, j int) bool { return h[i].line < h[j].line }
+func (h mergeHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *mergeHeap) Push(x interface{}) {
+	*h = append(*h, x.(*mergeItem))
+}
+func (h *mergeHeap) Pop() interface{} {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+func (w *worker) mergeChunks(chunks []string) (string, error) {
+	h := &mergeHeap{}
+	heap.Init(h)
+
+	for _, path := range chunks {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		scanner := bufio.NewScanner(f)
+		if scanner.Scan() {
+			heap.Push(h, &mergeItem{
+				line:    scanner.Text(),
+				scanner: scanner,
+				file:    f,
+			})
+		} else {
+			f.Close()
+			os.Remove(path)
+		}
+	}
+
+	output, err := os.CreateTemp(w.tmpDir, "sorted-")
+	if err != nil {
+		return "", err
+	}
+	defer output.Close()
+
+	for h.Len() > 0 {
+		item := heap.Pop(h).(*mergeItem)
+		fmt.Fprintln(output, item.line)
+
+		if item.scanner.Scan() {
+			item.line = item.scanner.Text()
+			heap.Push(h, item)
+		} else {
+			fname := item.file.Name()
+			item.file.Close()
+			os.Remove(fname)
+		}
+	}
+
+	return output.Name(), nil
 }
 
 // downloadPlugin downloads a compiled plugin binary from MinIO.
@@ -326,8 +640,8 @@ func (w *worker) downloadPlugin(ctx context.Context, codePath string) (string, e
 	return localPath, nil
 }
 
-// downloadInputRange downloads a byte range of the input file.
-func (w *worker) downloadInputRange(ctx context.Context) ([]byte, error) {
+// openInputRange opens a byte range of the input file for streaming.
+func (w *worker) openInputRange(ctx context.Context) (*minio.Object, error) {
 	opts := minio.GetObjectOptions{}
 	if w.cfg.InputSpec.Length > 0 {
 		endByte := w.cfg.InputSpec.Offset + w.cfg.InputSpec.Length - 1
@@ -339,6 +653,16 @@ func (w *worker) downloadInputRange(ctx context.Context) ([]byte, error) {
 	obj, err := w.minio.GetObject(ctx, w.cfg.MinioBucketInput, w.cfg.InputSpec.File, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get object: %w", err)
+	}
+
+	return obj, nil
+}
+
+// downloadInputRange downloads a byte range of the input file.
+func (w *worker) downloadInputRange(ctx context.Context) ([]byte, error) {
+	obj, err := w.openInputRange(ctx)
+	if err != nil {
+		return nil, err
 	}
 	defer obj.Close()
 
@@ -355,111 +679,11 @@ func (w *worker) downloadInputRange(ctx context.Context) ([]byte, error) {
 	return data, nil
 }
 
-type keyValue struct {
-	Key   string
-	Value string
-}
-
-// partitionRecordsByReducer partitions plugin.Record by hash(key) % numReducers.
-func (w *worker) partitionRecordsByReducer(records []plugin.Record) map[int][]plugin.Record {
-	partitions := make(map[int][]plugin.Record, w.cfg.NumReducers)
-
-	for _, r := range records {
-		reducerIdx := w.hashKey(r.Key) % w.cfg.NumReducers
-		partitions[reducerIdx] = append(partitions[reducerIdx], r)
-	}
-
-	return partitions
-}
-
 // hashKey returns a consistent hash for a key.
 func (w *worker) hashKey(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32())
-}
-
-// uploadRecordPartition uploads records to the jobs bucket as tab-separated lines.
-func (w *worker) uploadRecordPartition(ctx context.Context, reducerIdx int, records []plugin.Record) (string, error) {
-	var buf bytes.Buffer
-	for _, r := range records {
-		fmt.Fprintf(&buf, "%s\t%s\n", r.Key, r.Value)
-	}
-
-	objectKey := fmt.Sprintf("%s/map-%d-reduce-%d.txt", w.cfg.JobID, w.cfg.TaskIndex, reducerIdx)
-
-	_, err := w.minio.PutObject(ctx, w.cfg.MinioBucketJobs, objectKey,
-		bytes.NewReader(buf.Bytes()), int64(buf.Len()),
-		minio.PutObjectOptions{ContentType: "text/plain"},
-	)
-	if err != nil {
-		return "", fmt.Errorf("put object: %w", err)
-	}
-
-	w.log.Debug("uploaded partition",
-		zap.String("key", objectKey),
-		zap.Int("reducer", reducerIdx),
-		zap.Int("records", len(records)),
-	)
-	return objectKey, nil
-}
-
-// downloadPartition downloads a partition file and parses it into key-value pairs.
-func (w *worker) downloadPartition(ctx context.Context, path string) ([]keyValue, error) {
-	obj, err := w.minio.GetObject(ctx, w.cfg.MinioBucketJobs, path, minio.GetObjectOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("get object: %w", err)
-	}
-	defer obj.Close()
-
-	data, err := io.ReadAll(obj)
-	if err != nil {
-		return nil, fmt.Errorf("read object: %w", err)
-	}
-
-	var records []keyValue
-	lines := bytes.Split(data, []byte("\n"))
-	for _, line := range lines {
-		if len(line) == 0 {
-			continue
-		}
-		parts := bytes.SplitN(line, []byte("\t"), 2)
-		kv := keyValue{Key: string(parts[0])}
-		if len(parts) > 1 {
-			kv.Value = string(parts[1])
-		}
-		records = append(records, kv)
-	}
-
-	w.log.Debug("downloaded partition",
-		zap.String("path", path),
-		zap.Int("records", len(records)),
-	)
-	return records, nil
-}
-
-// uploadReduceOutput uploads reducer results to the output bucket.
-func (w *worker) uploadReduceOutput(ctx context.Context, records []plugin.Record) (string, error) {
-	var buf bytes.Buffer
-	for _, r := range records {
-		fmt.Fprintf(&buf, "%s\t%s\n", r.Key, r.Value)
-	}
-
-	objectKey := fmt.Sprintf("%s/part-%d.txt", w.cfg.JobID, w.cfg.TaskIndex)
-
-	_, err := w.minio.PutObject(ctx, w.cfg.MinioBucketOutput, objectKey,
-		bytes.NewReader(buf.Bytes()), int64(buf.Len()),
-		minio.PutObjectOptions{ContentType: "text/plain"},
-	)
-	if err != nil {
-		return "", fmt.Errorf("put object: %w", err)
-	}
-
-	w.log.Info("uploaded reduce output",
-		zap.String("key", objectKey),
-		zap.Int("records", len(records)),
-	)
-	return objectKey, nil
 }
 
 type outputLocation struct {

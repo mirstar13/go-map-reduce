@@ -3,8 +3,6 @@
 package main
 
 import (
-	"strings"
-
 	"github.com/mirstar13/go-map-reduce/pkg/plugin"
 )
 

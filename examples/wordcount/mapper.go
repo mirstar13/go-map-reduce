@@ -1,11 +1,9 @@
-// Package main implements a WordCount mapper plugin.
-// This mapper splits each line into words and emits (word, "1") for each word.
-//
 //go:build plugin
 
 package main
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -37,5 +35,21 @@ func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
 	return records, nil
 }
 
+// Combine sums up word counts locally on the mapper node.
+// This implements the plugin.Combiner interface.
+func (m *MapperImpl) Combine(key string, values []string) ([]plugin.Record, error) {
+	total := 0
+	for _, v := range values {
+		count, _ := strconv.Atoi(v)
+		total += count
+	}
+	return []plugin.Record{
+		{Key: key, Value: strconv.Itoa(total)},
+	}, nil
+}
+
 // Mapper is the exported symbol that the worker loads.
-var Mapper plugin.Mapper = &MapperImpl{}
+var Mapper interface {
+	plugin.Mapper
+	plugin.Combiner
+} = &MapperImpl{}
