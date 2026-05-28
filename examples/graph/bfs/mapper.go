@@ -61,5 +61,47 @@ func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
 	return records, nil
 }
 
+func (m *MapperImpl) Combine(key string, values []string) ([]plugin.Record, error) {
+	minDist := -1
+	var structure string
+
+	for _, v := range values {
+		if strings.HasPrefix(v, "S:") {
+			structure = v
+		} else {
+			var dStr string
+			if strings.HasPrefix(v, "D:") {
+				dStr = v[2:]
+			} else {
+				dStr = v
+			}
+
+			if dStr == "INF" {
+				continue
+			}
+
+			var d int
+			_, err := fmt.Sscanf(dStr, "%d", &d)
+			if err == nil {
+				if minDist == -1 || d < minDist {
+					minDist = d
+				}
+			}
+		}
+	}
+
+	var records []plugin.Record
+	if structure != "" {
+		records = append(records, plugin.Record{Key: key, Value: structure})
+	}
+	if minDist != -1 {
+		records = append(records, plugin.Record{Key: key, Value: fmt.Sprintf("D:%d", minDist)})
+	}
+	return records, nil
+}
+
 // Mapper is the exported symbol that the worker loads.
-var Mapper plugin.Mapper = &MapperImpl{}
+var Mapper interface {
+	plugin.Mapper
+	plugin.Combiner
+} = &MapperImpl{}
