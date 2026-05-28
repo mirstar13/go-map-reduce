@@ -51,5 +51,24 @@ func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
 	return records, nil
 }
 
+// Combine deduplicates doc IDs for a given word.
+func (m *MapperImpl) Combine(key string, values []string) ([]plugin.Record, error) {
+	seen := make(map[string]struct{})
+	var records []plugin.Record
+	for _, docID := range values {
+		if _, ok := seen[docID]; !ok {
+			seen[docID] = struct{}{}
+			records = append(records, plugin.Record{
+				Key:   key,
+				Value: docID,
+			})
+		}
+	}
+	return records, nil
+}
+
 // Mapper is the exported symbol that the worker loads.
-var Mapper plugin.Mapper = &MapperImpl{}
+var Mapper interface {
+	plugin.Mapper
+	plugin.Combiner
+} = &MapperImpl{}
