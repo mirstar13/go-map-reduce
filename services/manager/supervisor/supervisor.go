@@ -74,6 +74,8 @@ type Supervisor struct {
 
 	// notify is poked by task-callback handlers for an immediate state re-eval.
 	notify chan struct{}
+
+	onTerminal func(context.Context, uuid.UUID)
 }
 
 // New creates a Supervisor for the given job. It does not start the goroutine.
@@ -86,6 +88,7 @@ func New(
 	cfg *config.Config,
 	log *zap.Logger,
 	registry *Registry,
+	onTerminal func(context.Context, uuid.UUID),
 ) *Supervisor {
 	return &Supervisor{
 		jobID:      job.JobID,
@@ -98,6 +101,7 @@ func New(
 		log:        log.With(zap.String("job_id", job.JobID.String())),
 		registry:   registry,
 		notify:     make(chan struct{}, 1),
+		onTerminal: onTerminal,
 	}
 }
 
@@ -140,6 +144,9 @@ func (s *Supervisor) Run(ctx context.Context) {
 
 		if s.isTerminal() {
 			s.Cleanup(ctx)
+			if s.onTerminal != nil {
+				s.onTerminal(ctx, s.jobID)
+			}
 			return
 		}
 	}
