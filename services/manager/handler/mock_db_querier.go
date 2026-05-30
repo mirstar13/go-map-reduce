@@ -55,10 +55,66 @@ type mockQuerier struct {
 	updatePluginLastUsedFn         func(ctx context.Context, sourceHash string) error
 	listStalePluginsFn             func(ctx context.Context, dollar1 sql.NullString) ([]db.PluginCache, error)
 	deleteCachedPluginFn           func(ctx context.Context, sourceHash string) error
+	addWorkflowDependencyFn        func(ctx context.Context, arg db.AddWorkflowDependencyParams) error
+	checkStageDependenciesFn       func(ctx context.Context, arg db.CheckStageDependenciesParams) (int64, error)
+	createWorkflowFn               func(ctx context.Context, arg db.CreateWorkflowParams) (db.Workflow, error)
+	getDownstreamStagesFn          func(ctx context.Context, arg db.GetDownstreamStagesParams) ([]string, error)
+	getWorkflowFn                  func(ctx context.Context, workflowID uuid.UUID) (db.Workflow, error)
+	getWorkflowStagesFn            func(ctx context.Context, workflowID uuid.NullUUID) ([]db.Job, error)
+	updateWorkflowStatusFn         func(ctx context.Context, arg db.UpdateWorkflowStatusParams) (db.Workflow, error)
 }
 
 // compile-time assertion
 var _ db.Querier = (*mockQuerier)(nil)
+
+func (m *mockQuerier) AddWorkflowDependency(ctx context.Context, arg db.AddWorkflowDependencyParams) error {
+	if m.addWorkflowDependencyFn != nil {
+		return m.addWorkflowDependencyFn(ctx, arg)
+	}
+	panic("AddWorkflowDependency: not implemented")
+}
+
+func (m *mockQuerier) CheckStageDependencies(ctx context.Context, arg db.CheckStageDependenciesParams) (int64, error) {
+	if m.checkStageDependenciesFn != nil {
+		return m.checkStageDependenciesFn(ctx, arg)
+	}
+	panic("CheckStageDependencies: not implemented")
+}
+
+func (m *mockQuerier) CreateWorkflow(ctx context.Context, arg db.CreateWorkflowParams) (db.Workflow, error) {
+	if m.createWorkflowFn != nil {
+		return m.createWorkflowFn(ctx, arg)
+	}
+	panic("CreateWorkflow: not implemented")
+}
+
+func (m *mockQuerier) GetDownstreamStages(ctx context.Context, arg db.GetDownstreamStagesParams) ([]string, error) {
+	if m.getDownstreamStagesFn != nil {
+		return m.getDownstreamStagesFn(ctx, arg)
+	}
+	panic("GetDownstreamStages: not implemented")
+}
+
+func (m *mockQuerier) GetWorkflow(ctx context.Context, workflowID uuid.UUID) (db.Workflow, error) {
+	if m.getWorkflowFn != nil {
+		return m.getWorkflowFn(ctx, workflowID)
+	}
+	panic("GetWorkflow: not implemented")
+}
+
+func (m *mockQuerier) GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUID) ([]db.Job, error) {
+	if m.getWorkflowStagesFn != nil {
+		return m.getWorkflowStagesFn(ctx, workflowID)
+	}
+	panic("GetWorkflowStages: not implemented")
+}
+
+func (m *mockQuerier) UpdateWorkflowStatus(ctx context.Context, arg db.UpdateWorkflowStatusParams) (db.Workflow, error) {
+	if m.updateWorkflowStatusFn != nil {
+		return m.updateWorkflowStatusFn(ctx, arg)
+	}
+	panic("UpdateWorkflowStatus: not implemented")
+}
 
 func (m *mockQuerier) CancelJob(ctx context.Context, jobID uuid.UUID) error {
 	if m.cancelJobFn != nil {
