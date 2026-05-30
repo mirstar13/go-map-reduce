@@ -6,43 +6,51 @@ type Record struct {
 	Value string
 }
 
+// MapInput represents a single input for the Mapper.
+type MapInput struct {
+	Key   string
+	Value string
+}
+
 // Mapper is the interface that mapper plugins must implement.
-// The Map function receives input records and emits intermediate key-value pairs.
+// The Map function receives a batch of input records and emits intermediate key-value pairs.
 type Mapper interface {
-	// Map processes a single input record and returns zero or more output records.
-	// The input key is typically a line number or offset, and the value is the record content.
-	Map(key, value string) ([]Record, error)
+	// Map processes a batch of input records and returns output records.
+	// This reduces RPC overhead by processing multiple lines in a single call.
+	Map(inputs []MapInput) ([]Record, error)
 }
 
 // Combiner is an optional interface for local aggregation on the mapper node.
-// If implemented, the worker will use it to reduce data before the shuffle phase.
 type Combiner interface {
 	// Combine processes multiple values for a single key and returns zero or more output records.
-	// It usually follows the same logic as the Reducer to minimize data transfer.
 	Combine(key string, values []string) ([]Record, error)
 }
 
+// ReduceInput represents a single key and its associated values for the Reducer.
+type ReduceInput struct {
+	Key    string
+	Values []string
+}
+
 // Reducer is the interface that reducer plugins must implement.
-// The Reduce function receives a key and all values associated with that key.
+// The Reduce function receives a batch of keys, each with its associated values.
 type Reducer interface {
-	// Reduce processes all values for a single key and returns zero or more output records.
-	// The values slice contains all values emitted by mappers for this key.
-	Reduce(key string, values []string) ([]Record, error)
+	// Reduce processes a batch of keys and their values and returns output records.
+	Reduce(inputs []ReduceInput) ([]Record, error)
 }
 
 // MapperFunc is a function type that implements the Mapper interface.
-// This allows users to provide a simple function instead of a full struct.
-type MapperFunc func(key, value string) ([]Record, error)
+type MapperFunc func(inputs []MapInput) ([]Record, error)
 
 // Map implements the Mapper interface.
-func (f MapperFunc) Map(key, value string) ([]Record, error) {
-	return f(key, value)
+func (f MapperFunc) Map(inputs []MapInput) ([]Record, error) {
+	return f(inputs)
 }
 
 // ReducerFunc is a function type that implements the Reducer interface.
-type ReducerFunc func(key string, values []string) ([]Record, error)
+type ReducerFunc func(inputs []ReduceInput) ([]Record, error)
 
 // Reduce implements the Reducer interface.
-func (f ReducerFunc) Reduce(key string, values []string) ([]Record, error) {
-	return f(key, values)
+func (f ReducerFunc) Reduce(inputs []ReduceInput) ([]Record, error) {
+	return f(inputs)
 }

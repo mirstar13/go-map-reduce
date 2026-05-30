@@ -54,8 +54,7 @@ type MapperRPCClient struct {
 
 // MapArgs holds the arguments for Map RPC calls.
 type MapArgs struct {
-	Key   string
-	Value string
+	Inputs []MapInput
 }
 
 // MapReply holds the response from Map RPC calls.
@@ -64,9 +63,9 @@ type MapReply struct {
 	Error   string
 }
 
-func (m *MapperRPCClient) Map(key, value string) ([]Record, error) {
+func (m *MapperRPCClient) Map(inputs []MapInput) ([]Record, error) {
 	var reply MapReply
-	err := m.client.Call("Plugin.Map", &MapArgs{Key: key, Value: value}, &reply)
+	err := m.client.Call("Plugin.Map", &MapArgs{Inputs: inputs}, &reply)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +78,7 @@ func (m *MapperRPCClient) Map(key, value string) ([]Record, error) {
 func (m *MapperRPCClient) Combine(key string, values []string) ([]Record, error) {
 	// Combiner is optional. We check if the server implementation actually has the method.
 	var reply ReduceReply // Re-use ReduceReply for Combine
-	err := m.client.Call("Plugin.Combine", &ReduceArgs{Key: key, Values: values}, &reply)
+	err := m.client.Call("Plugin.Combine", &ReduceArgsSingle{Key: key, Values: values}, &reply)
 	if err != nil {
 		// If the method doesn't exist, we just return an error that the caller can handle (skip combining).
 		return nil, err
@@ -96,7 +95,7 @@ type MapperRPCServer struct {
 }
 
 func (s *MapperRPCServer) Map(args *MapArgs, reply *MapReply) error {
-	records, err := s.Impl.Map(args.Key, args.Value)
+	records, err := s.Impl.Map(args.Inputs)
 	if err != nil {
 		reply.Error = err.Error()
 		return nil
@@ -105,7 +104,7 @@ func (s *MapperRPCServer) Map(args *MapArgs, reply *MapReply) error {
 	return nil
 }
 
-func (s *MapperRPCServer) Combine(args *ReduceArgs, reply *ReduceReply) error {
+func (s *MapperRPCServer) Combine(args *ReduceArgsSingle, reply *ReduceReply) error {
 	combiner, ok := s.Impl.(Combiner)
 	if !ok {
 		reply.Error = "Combiner not implemented"
@@ -125,10 +124,15 @@ type ReducerRPCClient struct {
 	client *rpc.Client
 }
 
-// ReduceArgs holds the arguments for Reduce RPC calls.
-type ReduceArgs struct {
+// ReduceArgsSingle holds the arguments for a single key Combine call.
+type ReduceArgsSingle struct {
 	Key    string
 	Values []string
+}
+
+// ReduceArgs holds the arguments for Reduce RPC calls.
+type ReduceArgs struct {
+	Inputs []ReduceInput
 }
 
 // ReduceReply holds the response from Reduce RPC calls.
@@ -137,9 +141,9 @@ type ReduceReply struct {
 	Error   string
 }
 
-func (r *ReducerRPCClient) Reduce(key string, values []string) ([]Record, error) {
+func (r *ReducerRPCClient) Reduce(inputs []ReduceInput) ([]Record, error) {
 	var reply ReduceReply
-	err := r.client.Call("Plugin.Reduce", &ReduceArgs{Key: key, Values: values}, &reply)
+	err := r.client.Call("Plugin.Reduce", &ReduceArgs{Inputs: inputs}, &reply)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +159,7 @@ type ReducerRPCServer struct {
 }
 
 func (s *ReducerRPCServer) Reduce(args *ReduceArgs, reply *ReduceReply) error {
-	records, err := s.Impl.Reduce(args.Key, args.Values)
+	records, err := s.Impl.Reduce(args.Inputs)
 	if err != nil {
 		reply.Error = err.Error()
 		return nil

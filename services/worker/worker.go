@@ -151,19 +151,19 @@ func (w *worker) runMap(ctx context.Context) error {
 		return pw, nil
 	}
 
-	// Execute mapper on each input line via streaming
+	// Execute mapper on each input line via streaming with batching
 	scanner := bufio.NewScanner(inputObj)
 	lineCount := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
+	const batchSize = 1000
+	var batch []plugin.MapInput
+
+	processBatch := func() error {
+		if len(batch) == 0 {
+			return nil
 		}
-		
-		key := fmt.Sprintf("%d", w.cfg.InputSpec.Offset+int64(lineCount))
-		records, err := mapper.Map(key, line)
+		records, err := mapper.Map(batch)
 		if err != nil {
-			return fmt.Errorf("mapper.Map failed at line %d: %w", lineCount, err)
+			return fmt.Errorf("mapper.Map failed: %w", err)
 		}
 
 		for _, r := range records {
@@ -174,11 +174,33 @@ func (w *worker) runMap(ctx context.Context) error {
 			}
 			fmt.Fprintf(pw, "%s\t%s\n", r.Key, r.Value)
 		}
+		batch = batch[:0]
+		return nil
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		
+		key := fmt.Sprintf("%d", w.cfg.InputSpec.Offset+int64(lineCount))
+		batch = append(batch, plugin.MapInput{Key: key, Value: line})
+		
+		if len(batch) >= batchSize {
+			if err := processBatch(); err != nil {
+				return err
+			}
+		}
 		
 		lineCount++
 		if lineCount%100000 == 0 {
 			w.log.Info("map progress", zap.Int("lines_processed", lineCount))
 		}
+	}
+	// Process remaining records in the last batch
+	if err := processBatch(); err != nil {
+		return err
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -413,6 +435,23 @@ func (w *worker) runReduce(ctx context.Context) error {
 	var currentKey string
 	var currentValues []string
 	lineCount := 0
+	const batchSize = 100 // Smaller batch size for reduce as values can be large
+	var reduceBatch []plugin.ReduceInput
+
+	processReduceBatch := func() error {
+		if len(reduceBatch) == 0 {
+			return nil
+		}
+		records, err := reducer.Reduce(reduceBatch)
+		if err != nil {
+			return fmt.Errorf("reducer.Reduce failed: %w", err)
+		}
+		for _, r := range records {
+			fmt.Fprintf(bw, "%s\t%s\n", r.Key, r.Value)
+		}
+		reduceBatch = reduceBatch[:0]
+		return nil
+	}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -428,13 +467,11 @@ func (w *worker) runReduce(ctx context.Context) error {
 		}
 
 		if key != currentKey && len(currentValues) > 0 {
-			records, err := reducer.Reduce(currentKey, currentValues)
-			if err != nil {
-				of.Close()
-				return fmt.Errorf("reducer.Reduce failed for key %q: %w", currentKey, err)
-			}
-			for _, r := range records {
-				fmt.Fprintf(bw, "%s\t%s\n", r.Key, r.Value)
+			reduceBatch = append(reduceBatch, plugin.ReduceInput{Key: currentKey, Values: currentValues})
+			if len(reduceBatch) >= batchSize {
+				if err := processReduceBatch(); err != nil {
+					return err
+				}
 			}
 			currentValues = nil
 
@@ -446,16 +483,13 @@ func (w *worker) runReduce(ctx context.Context) error {
 		currentValues = append(currentValues, val)
 	}
 
-	// Final group
+	// Add last group to batch
 	if len(currentValues) > 0 {
-		records, err := reducer.Reduce(currentKey, currentValues)
-		if err != nil {
-			of.Close()
-			return fmt.Errorf("reducer.Reduce failed for key %q: %w", currentKey, err)
-		}
-		for _, r := range records {
-			fmt.Fprintf(bw, "%s\t%s\n", r.Key, r.Value)
-		}
+		reduceBatch = append(reduceBatch, plugin.ReduceInput{Key: currentKey, Values: currentValues})
+	}
+	// Process remaining batch
+	if err := processReduceBatch(); err != nil {
+		return err
 	}
 
 	if err := bw.Flush(); err != nil {

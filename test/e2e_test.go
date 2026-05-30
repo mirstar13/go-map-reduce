@@ -92,11 +92,13 @@ import (
 	mrplugin "github.com/mirstar13/go-map-reduce/pkg/plugin"
 )
 type MapperImpl struct{}
-func (m *MapperImpl) Map(key, value string) ([]mrplugin.Record, error) {
-	words := strings.Fields(value)
+func (m *MapperImpl) Map(inputs []mrplugin.MapInput) ([]mrplugin.Record, error) {
 	var records []mrplugin.Record
-	for _, w := range words {
-		records = append(records, mrplugin.Record{Key: w, Value: "1"})
+	for _, input := range inputs {
+		words := strings.Fields(input.Value)
+		for _, w := range words {
+			records = append(records, mrplugin.Record{Key: w, Value: "1"})
+		}
 	}
 	return records, nil
 }
@@ -116,8 +118,12 @@ import (
 	mrplugin "github.com/mirstar13/go-map-reduce/pkg/plugin"
 )
 type ReducerImpl struct{}
-func (r *ReducerImpl) Reduce(key string, values []string) ([]mrplugin.Record, error) {
-	return []mrplugin.Record{{Key: key, Value: fmt.Sprintf("%d", len(values))}}, nil
+func (r *ReducerImpl) Reduce(inputs []mrplugin.ReduceInput) ([]mrplugin.Record, error) {
+	var records []mrplugin.Record
+	for _, input := range inputs {
+		records = append(records, mrplugin.Record{Key: input.Key, Value: fmt.Sprintf("%d", len(input.Values))})
+	}
+	return records, nil
 }
 func main() {
 	plugin.Serve(&plugin.ServeConfig{

@@ -53,8 +53,12 @@ func main() {
 		HandshakeConfig: mplugin.Handshake,
 		Plugins: map[string]plugin.Plugin{
 			"mapper": &mplugin.MapperPlugin{
-				Impl: mplugin.MapperFunc(func(key, value string) ([]mplugin.Record, error) {
-					return []mplugin.Record{{Key: "M-" + key, Value: value}}, nil
+				Impl: mplugin.MapperFunc(func(inputs []mplugin.MapInput) ([]mplugin.Record, error) {
+					var records []mplugin.Record
+					for _, input := range inputs {
+						records = append(records, mplugin.Record{Key: "M-" + input.Key, Value: input.Value})
+					}
+					return records, nil
 				}),
 			},
 		},
@@ -76,8 +80,12 @@ func main() {
 		HandshakeConfig: mplugin.Handshake,
 		Plugins: map[string]plugin.Plugin{
 			"reducer": &mplugin.ReducerPlugin{
-				Impl: mplugin.ReducerFunc(func(key string, values []string) ([]mplugin.Record, error) {
-					return []mplugin.Record{{Key: "R-" + key, Value: strings.Join(values, ",")}}, nil
+				Impl: mplugin.ReducerFunc(func(inputs []mplugin.ReduceInput) ([]mplugin.Record, error) {
+					var records []mplugin.Record
+					for _, input := range inputs {
+						records = append(records, mplugin.Record{Key: "R-" + input.Key, Value: strings.Join(input.Values, ",")})
+					}
+					return records, nil
 				}),
 			},
 		},
