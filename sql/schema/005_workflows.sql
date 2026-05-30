@@ -16,13 +16,16 @@ CREATE TABLE workflow_dependencies (
     workflow_id    UUID REFERENCES workflows(workflow_id) ON DELETE CASCADE,
     stage_name     TEXT NOT NULL, -- The child stage
     depends_on     TEXT NOT NULL, -- The parent stage
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (workflow_id, stage_name, depends_on)
 );
 
 CREATE INDEX idx_workflows_owner_user ON workflows (owner_user_id);
 CREATE INDEX idx_workflows_status     ON workflows (status);
+CREATE INDEX idx_jobs_workflow_id     ON jobs (workflow_id);
 
 -- +goose Down
+DROP INDEX IF EXISTS idx_jobs_workflow_id;
 DROP TABLE IF EXISTS workflow_dependencies;
 ALTER TABLE jobs DROP COLUMN stage_name;
 ALTER TABLE jobs DROP COLUMN workflow_id;
