@@ -35,43 +35,45 @@ func (m *MapperImpl) Combine(key string, values []string) ([]plugin.Record, erro
 	return results, nil
 }
 
-func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
-	// Skip comments or empty lines
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		return nil, nil
-	}
-
-	// sx-stackoverflow and gplus edges format: SRC DST [TIMESTAMP]
-	// Using strings.Fields handles multiple spaces or tabs
-	fields := strings.Fields(trimmed)
-	if len(fields) < 2 {
-		return nil, nil
-	}
-
-	u, v := fields[0], fields[1]
-	if u == "" || v == "" {
-		return nil, nil
-	}
+func (m *MapperImpl) Map(inputs []plugin.MapInput) ([]plugin.Record, error) {
+	var records []plugin.Record
 
 	if m.seenNodes == nil {
 		m.seenNodes = make(map[string]struct{})
 	}
 
-	records := []plugin.Record{
-		{Key: u, Value: v},
-	}
+	for _, input := range inputs {
+		// Skip comments or empty lines
+		trimmed := strings.TrimSpace(input.Value)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
 
-	// Only emit the empty destination node record if we haven't seen it yet
-	// in this task. This prevents millions of redundant records.
-	if _, seen := m.seenNodes[v]; !seen {
-		records = append(records, plugin.Record{Key: v, Value: ""})
-		m.seenNodes[v] = struct{}{}
+		// sx-stackoverflow and gplus edges format: SRC DST [TIMESTAMP]
+		// Using strings.Fields handles multiple spaces or tabs
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			continue
+		}
+
+		u, v := fields[0], fields[1]
+		if u == "" || v == "" {
+			continue
+		}
+
+		records = append(records, plugin.Record{Key: u, Value: v})
+
+		// Only emit the empty destination node record if we haven't seen it yet
+		// in this task. This prevents millions of redundant records.
+		if _, seen := m.seenNodes[v]; !seen {
+			records = append(records, plugin.Record{Key: v, Value: ""})
+			m.seenNodes[v] = struct{}{}
+		}
+
+		// Also mark u as seen so if it appears as a destination later, we don't
+		// need to emit the empty record (since we already have edges for it).
+		m.seenNodes[u] = struct{}{}
 	}
-	
-	// Also mark u as seen so if it appears as a destination later, we don't
-	// need to emit the empty record (since we already have edges for it).
-	m.seenNodes[u] = struct{}{}
 
 	return records, nil
 }

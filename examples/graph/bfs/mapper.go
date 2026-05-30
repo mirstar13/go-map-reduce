@@ -12,51 +12,53 @@ import (
 // MapperImpl implements the Mapper interface for Breadth-First Search (BFS).
 type MapperImpl struct{}
 
-func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
-	// Value format: "rank|distance|label|neighbor1,neighbor2,..."
-	parts := strings.SplitN(value, "|", 4)
-	if len(parts) < 4 {
-		return nil, nil
-	}
-
-	rankStr := parts[0]
-	distStr := parts[1]
-	labelStr := parts[2]
-	neighborsStr := parts[3]
-
-	neighbors := strings.Split(neighborsStr, ",")
-	if neighborsStr == "" {
-		neighbors = []string{}
-	}
-
+func (m *MapperImpl) Map(inputs []plugin.MapInput) ([]plugin.Record, error) {
 	var records []plugin.Record
 
-	// 1. Distribute distance to neighbors if the node has been visited
-	if distStr != "INF" {
-		var dist int
-		_, err := fmt.Sscanf(distStr, "%d", &dist)
-		if err == nil {
-			for _, n := range neighbors {
-				if n != "" {
-					records = append(records, plugin.Record{
-						Key:   n,
-						Value: fmt.Sprintf("%d", dist+1),
-					})
+	for _, input := range inputs {
+		// Value format: "rank|distance|label|neighbor1,neighbor2,..."
+		parts := strings.SplitN(input.Value, "|", 4)
+		if len(parts) < 4 {
+			continue
+		}
+
+		rankStr := parts[0]
+		distStr := parts[1]
+		labelStr := parts[2]
+		neighborsStr := parts[3]
+
+		neighbors := strings.Split(neighborsStr, ",")
+		if neighborsStr == "" {
+			neighbors = []string{}
+		}
+
+		// 1. Distribute distance to neighbors if the node has been visited
+		if distStr != "INF" {
+			var dist int
+			_, err := fmt.Sscanf(distStr, "%d", &dist)
+			if err == nil {
+				for _, n := range neighbors {
+					if n != "" {
+						records = append(records, plugin.Record{
+							Key:   n,
+							Value: fmt.Sprintf("%d", dist+1),
+						})
+					}
 				}
 			}
 		}
-	}
 
-	// 2. Preserve structure and current properties
-	// Prefix "S:" for rank, label, and neighbors, "D:" for current distance
-	records = append(records, plugin.Record{
-		Key:   key,
-		Value: "S:" + rankStr + "|" + labelStr + "|" + neighborsStr,
-	})
-	records = append(records, plugin.Record{
-		Key:   key,
-		Value: "D:" + distStr,
-	})
+		// 2. Preserve structure and current properties
+		// Prefix "S:" for rank, label, and neighbors, "D:" for current distance
+		records = append(records, plugin.Record{
+			Key:   input.Key,
+			Value: "S:" + rankStr + "|" + labelStr + "|" + neighborsStr,
+		})
+		records = append(records, plugin.Record{
+			Key:   input.Key,
+			Value: "D:" + distStr,
+		})
+	}
 
 	return records, nil
 }

@@ -11,45 +11,47 @@ import (
 // MapperImpl implements the Mapper interface for Connected Components (Label Propagation).
 type MapperImpl struct{}
 
-func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
-	// Value format: "rank|distance|label|neighbor1,neighbor2,..."
-	parts := strings.SplitN(value, "|", 4)
-	if len(parts) < 4 {
-		return nil, nil
-	}
-
-	rankStr := parts[0]
-	distStr := parts[1]
-	labelStr := parts[2]
-	neighborsStr := parts[3]
-
-	neighbors := strings.Split(neighborsStr, ",")
-	if neighborsStr == "" {
-		neighbors = []string{}
-	}
-
+func (m *MapperImpl) Map(inputs []plugin.MapInput) ([]plugin.Record, error) {
 	var records []plugin.Record
 
-	// 1. Emit current label to all neighbors
-	for _, n := range neighbors {
-		if n != "" {
-			records = append(records, plugin.Record{
-				Key:   n,
-				Value: labelStr,
-			})
+	for _, input := range inputs {
+		// Value format: "rank|distance|label|neighbor1,neighbor2,..."
+		parts := strings.SplitN(input.Value, "|", 4)
+		if len(parts) < 4 {
+			continue
 		}
-	}
 
-	// 2. Preserve structure and current label
-	// Prefix "S:" for rank, distance, and neighbors, "L:" for current label
-	records = append(records, plugin.Record{
-		Key:   key,
-		Value: "S:" + rankStr + "|" + distStr + "|" + neighborsStr,
-	})
-	records = append(records, plugin.Record{
-		Key:   key,
-		Value: "L:" + labelStr,
-	})
+		rankStr := parts[0]
+		distStr := parts[1]
+		labelStr := parts[2]
+		neighborsStr := parts[3]
+
+		neighbors := strings.Split(neighborsStr, ",")
+		if neighborsStr == "" {
+			neighbors = []string{}
+		}
+
+		// 1. Emit current label to all neighbors
+		for _, n := range neighbors {
+			if n != "" {
+				records = append(records, plugin.Record{
+					Key:   n,
+					Value: labelStr,
+				})
+			}
+		}
+
+		// 2. Preserve structure and current label
+		// Prefix "S:" for rank, distance, and neighbors, "L:" for current label
+		records = append(records, plugin.Record{
+			Key:   input.Key,
+			Value: "S:" + rankStr + "|" + distStr + "|" + neighborsStr,
+		})
+		records = append(records, plugin.Record{
+			Key:   input.Key,
+			Value: "L:" + labelStr,
+		})
+	}
 
 	return records, nil
 }

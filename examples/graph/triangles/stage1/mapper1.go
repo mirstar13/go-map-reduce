@@ -27,26 +27,30 @@ func (m *Mapper1Impl) Combine(key string, values []string) ([]plugin.Record, err
 	return results, nil
 }
 
-func (m *Mapper1Impl) Map(key, value string) ([]plugin.Record, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		return nil, nil
+func (m *Mapper1Impl) Map(inputs []plugin.MapInput) ([]plugin.Record, error) {
+	var records []plugin.Record
+
+	for _, input := range inputs {
+		trimmed := strings.TrimSpace(input.Value)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			continue
+		}
+
+		u, v := fields[0], fields[1]
+		if u == v {
+			continue // Ignore self-loops
+		}
+
+		records = append(records, plugin.Record{Key: u, Value: v})
+		records = append(records, plugin.Record{Key: v, Value: u})
 	}
 
-	fields := strings.Fields(trimmed)
-	if len(fields) < 2 {
-		return nil, nil
-	}
-
-	u, v := fields[0], fields[1]
-	if u == v {
-		return nil, nil // Ignore self-loops
-	}
-
-	return []plugin.Record{
-		{Key: u, Value: v},
-		{Key: v, Value: u},
-	}, nil
+	return records, nil
 }
 
 var Mapper interface {

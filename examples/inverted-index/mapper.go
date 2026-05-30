@@ -21,30 +21,33 @@ type document struct {
 // MapperImpl implements the Mapper interface for inverted index.
 type MapperImpl struct{}
 
-// Map parses a JSON document and emits (word, docID) pairs.
-func (m *MapperImpl) Map(key, value string) ([]plugin.Record, error) {
-	var doc document
-	if err := json.Unmarshal([]byte(value), &doc); err != nil {
-		// Skip invalid JSON lines
-		return nil, nil
-	}
-
+// Map parses JSON documents and emits (word, docID) pairs.
+func (m *MapperImpl) Map(inputs []plugin.MapInput) ([]plugin.Record, error) {
 	var records []plugin.Record
-	seen := make(map[string]bool)
 
-	// Split content into words
-	words := strings.FieldsFunc(doc.Content, func(r rune) bool {
-		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
-	})
+	for _, input := range inputs {
+		var doc document
+		if err := json.Unmarshal([]byte(input.Value), &doc); err != nil {
+			// Skip invalid JSON lines
+			continue
+		}
 
-	for _, word := range words {
-		word = strings.ToLower(word)
-		if word != "" && !seen[word] {
-			seen[word] = true
-			records = append(records, plugin.Record{
-				Key:   word,
-				Value: doc.DocID,
-			})
+		seen := make(map[string]bool)
+
+		// Split content into words
+		words := strings.FieldsFunc(doc.Content, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+		})
+
+		for _, word := range words {
+			word = strings.ToLower(word)
+			if word != "" && !seen[word] {
+				seen[word] = true
+				records = append(records, plugin.Record{
+					Key:   word,
+					Value: doc.DocID,
+				})
+			}
 		}
 	}
 
