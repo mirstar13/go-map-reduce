@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/mirstar13/go-map-reduce/cmd/cli/client"
+	"github.com/mirstar13/go-map-reduce/db"
 )
 
 type panel int
@@ -16,12 +17,13 @@ type model struct {
 	client   *client.Client
 	focused  panel
 	quitting bool
-	jobs     []interface{}
+	jobs     []db.Job
 }
 
-func initialModel() model {
+func initialModel(c *client.Client) model {
 	return model{
-		jobs:    []interface{}{},
+		client:  c,
+		jobs:    []db.Job{},
 		focused: jobsPanel,
 	}
 }
