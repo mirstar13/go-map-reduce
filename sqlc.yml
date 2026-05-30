@@ -22,6 +22,3 @@ sql:
             go_type:
               import: "time"
               type: "Time"
-
-
-go run cmd/benchmark-runner/main.go examples/sx-stackoverflow/sx-stackoverflow.txt examples/graph/preprocessor/mapper.go examples/graph/preprocessor/reducer.go 10 --- Iteration 1 of 10 ---Uploading mapper  100% [] (1.0/1.0 kB)Uploading reducer 100% [] (1.1/1.1 kB)Uploading input   100% [] (1.6/1.6 GB, 12 MB/s) [2m20s:0s]s]]]50s]2026/05/20 19:42:38 upload input: server error 408: Request Timeoutexit status 1

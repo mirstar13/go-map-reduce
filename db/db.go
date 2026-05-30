@@ -24,8 +24,14 @@ func New(db DBTX) *Queries {
 func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	q := Queries{db: db}
 	var err error
+	if q.addWorkflowDependencyStmt, err = db.PrepareContext(ctx, addWorkflowDependency); err != nil {
+		return nil, fmt.Errorf("error preparing query AddWorkflowDependency: %w", err)
+	}
 	if q.cancelJobStmt, err = db.PrepareContext(ctx, cancelJob); err != nil {
 		return nil, fmt.Errorf("error preparing query CancelJob: %w", err)
+	}
+	if q.checkStageDependenciesStmt, err = db.PrepareContext(ctx, checkStageDependencies); err != nil {
+		return nil, fmt.Errorf("error preparing query CheckStageDependencies: %w", err)
 	}
 	if q.countJobsByStatusStmt, err = db.PrepareContext(ctx, countJobsByStatus); err != nil {
 		return nil, fmt.Errorf("error preparing query CountJobsByStatus: %w", err)
@@ -45,6 +51,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.createReduceTaskStmt, err = db.PrepareContext(ctx, createReduceTask); err != nil {
 		return nil, fmt.Errorf("error preparing query CreateReduceTask: %w", err)
 	}
+	if q.createWorkflowStmt, err = db.PrepareContext(ctx, createWorkflow); err != nil {
+		return nil, fmt.Errorf("error preparing query CreateWorkflow: %w", err)
+	}
 	if q.deleteCachedPluginStmt, err = db.PrepareContext(ctx, deleteCachedPlugin); err != nil {
 		return nil, fmt.Errorf("error preparing query DeleteCachedPlugin: %w", err)
 	}
@@ -62,6 +71,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getCachedPluginStmt, err = db.PrepareContext(ctx, getCachedPlugin); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCachedPlugin: %w", err)
+	}
+	if q.getDownstreamStagesStmt, err = db.PrepareContext(ctx, getDownstreamStages); err != nil {
+		return nil, fmt.Errorf("error preparing query GetDownstreamStages: %w", err)
 	}
 	if q.getJobStmt, err = db.PrepareContext(ctx, getJob); err != nil {
 		return nil, fmt.Errorf("error preparing query GetJob: %w", err)
@@ -111,6 +123,12 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getStaleRunningReduceTasksStmt, err = db.PrepareContext(ctx, getStaleRunningReduceTasks); err != nil {
 		return nil, fmt.Errorf("error preparing query GetStaleRunningReduceTasks: %w", err)
 	}
+	if q.getWorkflowStmt, err = db.PrepareContext(ctx, getWorkflow); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflow: %w", err)
+	}
+	if q.getWorkflowStagesStmt, err = db.PrepareContext(ctx, getWorkflowStages); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowStages: %w", err)
+	}
 	if q.incrementMapTaskRetryStmt, err = db.PrepareContext(ctx, incrementMapTaskRetry); err != nil {
 		return nil, fmt.Errorf("error preparing query IncrementMapTaskRetry: %w", err)
 	}
@@ -150,6 +168,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.updatePluginLastUsedStmt, err = db.PrepareContext(ctx, updatePluginLastUsed); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdatePluginLastUsed: %w", err)
 	}
+	if q.updateWorkflowStatusStmt, err = db.PrepareContext(ctx, updateWorkflowStatus); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateWorkflowStatus: %w", err)
+	}
 	if q.upsertCachedPluginStmt, err = db.PrepareContext(ctx, upsertCachedPlugin); err != nil {
 		return nil, fmt.Errorf("error preparing query UpsertCachedPlugin: %w", err)
 	}
@@ -158,9 +179,19 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 
 func (q *Queries) Close() error {
 	var err error
+	if q.addWorkflowDependencyStmt != nil {
+		if cerr := q.addWorkflowDependencyStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing addWorkflowDependencyStmt: %w", cerr)
+		}
+	}
 	if q.cancelJobStmt != nil {
 		if cerr := q.cancelJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing cancelJobStmt: %w", cerr)
+		}
+	}
+	if q.checkStageDependenciesStmt != nil {
+		if cerr := q.checkStageDependenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing checkStageDependenciesStmt: %w", cerr)
 		}
 	}
 	if q.countJobsByStatusStmt != nil {
@@ -193,6 +224,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing createReduceTaskStmt: %w", cerr)
 		}
 	}
+	if q.createWorkflowStmt != nil {
+		if cerr := q.createWorkflowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing createWorkflowStmt: %w", cerr)
+		}
+	}
 	if q.deleteCachedPluginStmt != nil {
 		if cerr := q.deleteCachedPluginStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing deleteCachedPluginStmt: %w", cerr)
@@ -221,6 +257,11 @@ func (q *Queries) Close() error {
 	if q.getCachedPluginStmt != nil {
 		if cerr := q.getCachedPluginStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getCachedPluginStmt: %w", cerr)
+		}
+	}
+	if q.getDownstreamStagesStmt != nil {
+		if cerr := q.getDownstreamStagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getDownstreamStagesStmt: %w", cerr)
 		}
 	}
 	if q.getJobStmt != nil {
@@ -303,6 +344,16 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getStaleRunningReduceTasksStmt: %w", cerr)
 		}
 	}
+	if q.getWorkflowStmt != nil {
+		if cerr := q.getWorkflowStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowStmt: %w", cerr)
+		}
+	}
+	if q.getWorkflowStagesStmt != nil {
+		if cerr := q.getWorkflowStagesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowStagesStmt: %w", cerr)
+		}
+	}
 	if q.incrementMapTaskRetryStmt != nil {
 		if cerr := q.incrementMapTaskRetryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing incrementMapTaskRetryStmt: %w", cerr)
@@ -368,6 +419,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing updatePluginLastUsedStmt: %w", cerr)
 		}
 	}
+	if q.updateWorkflowStatusStmt != nil {
+		if cerr := q.updateWorkflowStatusStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateWorkflowStatusStmt: %w", cerr)
+		}
+	}
 	if q.upsertCachedPluginStmt != nil {
 		if cerr := q.upsertCachedPluginStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing upsertCachedPluginStmt: %w", cerr)
@@ -412,19 +468,23 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 type Queries struct {
 	db                               DBTX
 	tx                               *sql.Tx
+	addWorkflowDependencyStmt        *sql.Stmt
 	cancelJobStmt                    *sql.Stmt
+	checkStageDependenciesStmt       *sql.Stmt
 	countJobsByStatusStmt            *sql.Stmt
 	countMapTasksByStatusStmt        *sql.Stmt
 	countReduceTasksByStatusStmt     *sql.Stmt
 	createJobStmt                    *sql.Stmt
 	createMapTaskStmt                *sql.Stmt
 	createReduceTaskStmt             *sql.Stmt
+	createWorkflowStmt               *sql.Stmt
 	deleteCachedPluginStmt           *sql.Stmt
 	deleteJobStmt                    *sql.Stmt
 	failJobStmt                      *sql.Stmt
 	getActiveJobsByReplicaStmt       *sql.Stmt
 	getAllJobsStmt                   *sql.Stmt
 	getCachedPluginStmt              *sql.Stmt
+	getDownstreamStagesStmt          *sql.Stmt
 	getJobStmt                       *sql.Stmt
 	getJobsByUserStmt                *sql.Stmt
 	getMapTaskStmt                   *sql.Stmt
@@ -441,6 +501,8 @@ type Queries struct {
 	getReduceTasksByJobAndStatusStmt *sql.Stmt
 	getStaleRunningMapTasksStmt      *sql.Stmt
 	getStaleRunningReduceTasksStmt   *sql.Stmt
+	getWorkflowStmt                  *sql.Stmt
+	getWorkflowStagesStmt            *sql.Stmt
 	incrementMapTaskRetryStmt        *sql.Stmt
 	incrementReduceTaskRetryStmt     *sql.Stmt
 	listStalePluginsStmt             *sql.Stmt
@@ -454,6 +516,7 @@ type Queries struct {
 	updateJobReducerPathStmt         *sql.Stmt
 	updateJobStatusStmt              *sql.Stmt
 	updatePluginLastUsedStmt         *sql.Stmt
+	updateWorkflowStatusStmt         *sql.Stmt
 	upsertCachedPluginStmt           *sql.Stmt
 }
 
@@ -461,19 +524,23 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
 		db:                               tx,
 		tx:                               tx,
+		addWorkflowDependencyStmt:        q.addWorkflowDependencyStmt,
 		cancelJobStmt:                    q.cancelJobStmt,
+		checkStageDependenciesStmt:       q.checkStageDependenciesStmt,
 		countJobsByStatusStmt:            q.countJobsByStatusStmt,
 		countMapTasksByStatusStmt:        q.countMapTasksByStatusStmt,
 		countReduceTasksByStatusStmt:     q.countReduceTasksByStatusStmt,
 		createJobStmt:                    q.createJobStmt,
 		createMapTaskStmt:                q.createMapTaskStmt,
 		createReduceTaskStmt:             q.createReduceTaskStmt,
+		createWorkflowStmt:               q.createWorkflowStmt,
 		deleteCachedPluginStmt:           q.deleteCachedPluginStmt,
 		deleteJobStmt:                    q.deleteJobStmt,
 		failJobStmt:                      q.failJobStmt,
 		getActiveJobsByReplicaStmt:       q.getActiveJobsByReplicaStmt,
 		getAllJobsStmt:                   q.getAllJobsStmt,
 		getCachedPluginStmt:              q.getCachedPluginStmt,
+		getDownstreamStagesStmt:          q.getDownstreamStagesStmt,
 		getJobStmt:                       q.getJobStmt,
 		getJobsByUserStmt:                q.getJobsByUserStmt,
 		getMapTaskStmt:                   q.getMapTaskStmt,
@@ -490,6 +557,8 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getReduceTasksByJobAndStatusStmt: q.getReduceTasksByJobAndStatusStmt,
 		getStaleRunningMapTasksStmt:      q.getStaleRunningMapTasksStmt,
 		getStaleRunningReduceTasksStmt:   q.getStaleRunningReduceTasksStmt,
+		getWorkflowStmt:                  q.getWorkflowStmt,
+		getWorkflowStagesStmt:            q.getWorkflowStagesStmt,
 		incrementMapTaskRetryStmt:        q.incrementMapTaskRetryStmt,
 		incrementReduceTaskRetryStmt:     q.incrementReduceTaskRetryStmt,
 		listStalePluginsStmt:             q.listStalePluginsStmt,
@@ -503,6 +572,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		updateJobReducerPathStmt:         q.updateJobReducerPathStmt,
 		updateJobStatusStmt:              q.updateJobStatusStmt,
 		updatePluginLastUsedStmt:         q.updatePluginLastUsedStmt,
+		updateWorkflowStatusStmt:         q.updateWorkflowStatusStmt,
 		upsertCachedPluginStmt:           q.upsertCachedPluginStmt,
 	}
 }

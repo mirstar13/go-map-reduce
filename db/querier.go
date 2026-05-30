@@ -12,7 +12,10 @@ import (
 )
 
 type Querier interface {
+	AddWorkflowDependency(ctx context.Context, arg AddWorkflowDependencyParams) error
 	CancelJob(ctx context.Context, jobID uuid.UUID) error
+	// Returns all parents of a stage and their status
+	CheckStageDependencies(ctx context.Context, arg CheckStageDependenciesParams) ([]string, error)
 	// Useful for an admin dashboard or metrics endpoint.
 	CountJobsByStatus(ctx context.Context) ([]CountJobsByStatusRow, error)
 	// Atomically read how many tasks are COMPLETED vs total.
@@ -23,6 +26,7 @@ type Querier interface {
 	CreateJob(ctx context.Context, arg CreateJobParams) (Job, error)
 	CreateMapTask(ctx context.Context, arg CreateMapTaskParams) (MapTask, error)
 	CreateReduceTask(ctx context.Context, arg CreateReduceTaskParams) (ReduceTask, error)
+	CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) (Workflow, error)
 	DeleteCachedPlugin(ctx context.Context, sourceHash string) error
 	DeleteJob(ctx context.Context, jobID uuid.UUID) error
 	FailJob(ctx context.Context, arg FailJobParams) error
@@ -30,6 +34,7 @@ type Querier interface {
 	GetActiveJobsByReplica(ctx context.Context, ownerReplica string) ([]Job, error)
 	GetAllJobs(ctx context.Context) ([]Job, error)
 	GetCachedPlugin(ctx context.Context, sourceHash string) (PluginCache, error)
+	GetDownstreamStages(ctx context.Context, arg GetDownstreamStagesParams) ([]string, error)
 	GetJob(ctx context.Context, jobID uuid.UUID) (Job, error)
 	GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job, error)
 	GetMapTask(ctx context.Context, taskID uuid.UUID) (MapTask, error)
@@ -53,6 +58,8 @@ type Querier interface {
 	GetStaleRunningMapTasks(ctx context.Context, dollar_1 sql.NullString) ([]MapTask, error)
 	// Used by the timeout watchdog.
 	GetStaleRunningReduceTasks(ctx context.Context, dollar_1 sql.NullString) ([]ReduceTask, error)
+	GetWorkflow(ctx context.Context, workflowID uuid.UUID) (Workflow, error)
+	GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUID) ([]Job, error)
 	IncrementMapTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	IncrementReduceTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	ListStalePlugins(ctx context.Context, dollar_1 sql.NullString) ([]PluginCache, error)
@@ -72,6 +79,7 @@ type Querier interface {
 	UpdateJobReducerPath(ctx context.Context, arg UpdateJobReducerPathParams) error
 	UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams) error
 	UpdatePluginLastUsed(ctx context.Context, sourceHash string) error
+	UpdateWorkflowStatus(ctx context.Context, arg UpdateWorkflowStatusParams) (Workflow, error)
 	UpsertCachedPlugin(ctx context.Context, arg UpsertCachedPluginParams) error
 }
 

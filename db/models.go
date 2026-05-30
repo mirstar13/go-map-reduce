@@ -28,6 +28,8 @@ type Job struct {
 	StartedAt    sql.NullTime   `json:"started_at"`
 	CompletedAt  sql.NullTime   `json:"completed_at"`
 	ErrorMessage sql.NullString `json:"error_message"`
+	WorkflowID   uuid.NullUUID  `json:"workflow_id"`
+	StageName    sql.NullString `json:"stage_name"`
 }
 
 type MapTask struct {
@@ -63,4 +65,18 @@ type ReduceTask struct {
 	StartedAt   sql.NullTime   `json:"started_at"`
 	CompletedAt sql.NullTime   `json:"completed_at"`
 	OutputPath  sql.NullString `json:"output_path"`
+}
+
+type Workflow struct {
+	WorkflowID  uuid.UUID `json:"workflow_id"`
+	Name        string    `json:"name"`
+	Status      string    `json:"status"`
+	OwnerUserID string    `json:"owner_user_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type WorkflowDependency struct {
+	WorkflowID uuid.UUID `json:"workflow_id"`
+	StageName  string    `json:"stage_name"`
+	DependsOn  string    `json:"depends_on"`
 }

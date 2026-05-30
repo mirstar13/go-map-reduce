@@ -75,7 +75,7 @@ INSERT INTO jobs (
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9
 )
-RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message
+RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name
 `
 
 type CreateJobParams struct {
@@ -119,6 +119,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.ErrorMessage,
+		&i.WorkflowID,
+		&i.StageName,
 	)
 	return i, err
 }
@@ -153,7 +155,7 @@ func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) error {
 }
 
 const getActiveJobsByReplica = `-- name: GetActiveJobsByReplica :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
 WHERE owner_replica = $1
   AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
 `
@@ -184,6 +186,8 @@ func (q *Queries) GetActiveJobsByReplica(ctx context.Context, ownerReplica strin
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.ErrorMessage,
+			&i.WorkflowID,
+			&i.StageName,
 		); err != nil {
 			return nil, err
 		}
@@ -199,7 +203,7 @@ func (q *Queries) GetActiveJobsByReplica(ctx context.Context, ownerReplica strin
 }
 
 const getAllJobs = `-- name: GetAllJobs :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
 ORDER BY submitted_at DESC
 `
 
@@ -228,6 +232,8 @@ func (q *Queries) GetAllJobs(ctx context.Context) ([]Job, error) {
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.ErrorMessage,
+			&i.WorkflowID,
+			&i.StageName,
 		); err != nil {
 			return nil, err
 		}
@@ -243,7 +249,7 @@ func (q *Queries) GetAllJobs(ctx context.Context) ([]Job, error) {
 }
 
 const getJob = `-- name: GetJob :one
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
 WHERE job_id = $1
 LIMIT 1
 `
@@ -267,12 +273,14 @@ func (q *Queries) GetJob(ctx context.Context, jobID uuid.UUID) (Job, error) {
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.ErrorMessage,
+		&i.WorkflowID,
+		&i.StageName,
 	)
 	return i, err
 }
 
 const getJobsByUser = `-- name: GetJobsByUser :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
 WHERE owner_user_id = $1
 ORDER BY submitted_at DESC
 `
@@ -302,6 +310,8 @@ func (q *Queries) GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job,
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.ErrorMessage,
+			&i.WorkflowID,
+			&i.StageName,
 		); err != nil {
 			return nil, err
 		}
