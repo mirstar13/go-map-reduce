@@ -11,6 +11,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	fiberlog "github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/minio/minio-go/v7"
@@ -25,6 +26,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/services/manager/splitter"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 	"github.com/mirstar13/go-map-reduce/services/manager/watchdog"
+	"github.com/mirstar13/go-map-reduce/services/manager/workflow"
 )
 
 func main() {
@@ -76,9 +78,17 @@ func main() {
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	defer rootCancel()
 
+	var launchSupervisor func(job db.Job)
+
+	workflowController := workflow.NewController(queries, func(job db.Job) {
+		launchSupervisor(job)
+	}, log)
+
 	// Called from the job handler (new job) and from startup recovery.
-	launchSupervisor := func(job db.Job) {
-		sup := supervisor.New(job, queries, spl, disp, minioClient, cfg, log, registry)
+	launchSupervisor = func(job db.Job) {
+		sup := supervisor.New(job, queries, spl, disp, minioClient, cfg, log, registry, func(ctx context.Context, jobID uuid.UUID) {
+			_ = workflowController.HandleJobTerminal(ctx, jobID)
+		})
 		go sup.Run(rootCtx)
 	}
 
@@ -99,6 +109,7 @@ func main() {
 
 	jobHandler := handler.NewJobHandler(queries, registry, spl, disp, cfg, log, launchSupervisor)
 	taskHandler := handler.NewTaskHandler(queries, registry, minioClient, cfg, log)
+	workflowHandler := handler.NewWorkflowHandler(queries, cfg, log, launchSupervisor)
 
 	app := fiber.New(fiber.Config{
 		ErrorHandler: func(c fiber.Ctx, err error) error {
@@ -148,6 +159,9 @@ func main() {
 
 	// Admin: all jobs regardless of owner
 	api.Get("/admin/jobs", jobHandler.AdminListJobs)
+
+	api.Post("/workflows", workflowHandler.SubmitWorkflow)
+	api.Get("/workflows/:id", workflowHandler.GetWorkflow)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

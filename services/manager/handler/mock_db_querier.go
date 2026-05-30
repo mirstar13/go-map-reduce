@@ -62,10 +62,58 @@ type mockQuerier struct {
 	getWorkflowFn                  func(ctx context.Context, workflowID uuid.UUID) (db.Workflow, error)
 	getWorkflowStagesFn            func(ctx context.Context, workflowID uuid.NullUUID) ([]db.Job, error)
 	updateWorkflowStatusFn         func(ctx context.Context, arg db.UpdateWorkflowStatusParams) (db.Workflow, error)
+	getCompletedWorkflowStagesCountFn func(ctx context.Context, workflowID uuid.NullUUID) (int64, error)
+	getJobByWorkflowStageFn        func(ctx context.Context, arg db.GetJobByWorkflowStageParams) (db.Job, error)
+	getParentsOutputPathsFn        func(ctx context.Context, arg db.GetParentsOutputPathsParams) ([]string, error)
+	getWorkflowStatusFn            func(ctx context.Context, workflowID uuid.UUID) (string, error)
+	updateJobInputAndStatusFn      func(ctx context.Context, arg db.UpdateJobInputAndStatusParams) error
+	getWorkflowDependenciesFn      func(ctx context.Context, workflowID uuid.UUID) ([]db.GetWorkflowDependenciesRow, error)
 }
 
 // compile-time assertion
 var _ db.Querier = (*mockQuerier)(nil)
+
+func (m *mockQuerier) GetWorkflowDependencies(ctx context.Context, workflowID uuid.UUID) ([]db.GetWorkflowDependenciesRow, error) {
+	if m.getWorkflowDependenciesFn != nil {
+		return m.getWorkflowDependenciesFn(ctx, workflowID)
+	}
+	panic("GetWorkflowDependencies: not implemented")
+}
+
+func (m *mockQuerier) GetCompletedWorkflowStagesCount(ctx context.Context, workflowID uuid.NullUUID) (int64, error) {
+	if m.getCompletedWorkflowStagesCountFn != nil {
+		return m.getCompletedWorkflowStagesCountFn(ctx, workflowID)
+	}
+	panic("GetCompletedWorkflowStagesCount: not implemented")
+}
+
+func (m *mockQuerier) GetJobByWorkflowStage(ctx context.Context, arg db.GetJobByWorkflowStageParams) (db.Job, error) {
+	if m.getJobByWorkflowStageFn != nil {
+		return m.getJobByWorkflowStageFn(ctx, arg)
+	}
+	panic("GetJobByWorkflowStage: not implemented")
+}
+
+func (m *mockQuerier) GetParentsOutputPaths(ctx context.Context, arg db.GetParentsOutputPathsParams) ([]string, error) {
+	if m.getParentsOutputPathsFn != nil {
+		return m.getParentsOutputPathsFn(ctx, arg)
+	}
+	panic("GetParentsOutputPaths: not implemented")
+}
+
+func (m *mockQuerier) GetWorkflowStatus(ctx context.Context, workflowID uuid.UUID) (string, error) {
+	if m.getWorkflowStatusFn != nil {
+		return m.getWorkflowStatusFn(ctx, workflowID)
+	}
+	panic("GetWorkflowStatus: not implemented")
+}
+
+func (m *mockQuerier) UpdateJobInputAndStatus(ctx context.Context, arg db.UpdateJobInputAndStatusParams) error {
+	if m.updateJobInputAndStatusFn != nil {
+		return m.updateJobInputAndStatusFn(ctx, arg)
+	}
+	panic("UpdateJobInputAndStatus: not implemented")
+}
 
 func (m *mockQuerier) AddWorkflowDependency(ctx context.Context, arg db.AddWorkflowDependencyParams) error {
 	if m.addWorkflowDependencyFn != nil {
