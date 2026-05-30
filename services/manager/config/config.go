@@ -26,13 +26,17 @@ type Config struct {
 	MinioSecretKey    string // MINIO_SECRET_KEY  (required)
 	MinioUseSSL       bool   // MINIO_USE_SSL, default false
 
-	// Kubernetes worker dispatch
-	WorkerImage     string // WORKER_IMAGE
-	BuilderImage    string // BUILDER_IMAGE
-	WorkerNamespace string // WORKER_NAMESPACE
-	BuilderURL      string // BUILDER_URL
+	// Worker K8s Job settings
+	WorkerImage         string // WORKER_IMAGE
+	BuilderImage        string // BUILDER_IMAGE
+	WorkerNamespace     string // WORKER_NAMESPACE
+	BuilderURL          string // BUILDER_URL
 	// ManagerURL is advertised to workers for POST /tasks/*/complete|fail callbacks.
-	ManagerURL string // MANAGER_URL
+	ManagerURL          string // MANAGER_URL
+	WorkerCPURequest    string // WORKER_CPU_REQUEST, default "500m"
+	WorkerMemoryRequest string // WORKER_MEMORY_REQUEST, default "512Mi"
+	WorkerCPULimit      string // WORKER_CPU_LIMIT, default "500m"
+	WorkerMemoryLimit   string // WORKER_MEMORY_LIMIT, default "512Mi"
 
 	// Job execution limits
 	TaskTimeoutSeconds int // TASK_TIMEOUT_SECONDS, default 300
@@ -72,6 +76,10 @@ func Load() (*Config, error) {
 	v.SetDefault("worker_namespace", "mapreduce")
 	v.SetDefault("manager_url", "http://manager-api.mapreduce.svc.cluster.local:8080")
 	v.SetDefault("builder_url", "http://builder-api.mapreduce.svc.cluster.local:8080")
+	v.SetDefault("worker_cpu_request", "500m")
+	v.SetDefault("worker_memory_request", "512Mi")
+	v.SetDefault("worker_cpu_limit", "500m")
+	v.SetDefault("worker_memory_limit", "512Mi")
 	v.SetDefault("task_timeout_seconds", 300)
 	v.SetDefault("task_max_retries", 3)
 	v.SetDefault("log_level", "info")
@@ -92,9 +100,13 @@ func Load() (*Config, error) {
 		WorkerImage:        v.GetString("worker_image"),
 		BuilderImage:       v.GetString("builder_image"),
 		WorkerNamespace:    v.GetString("worker_namespace"),
-		BuilderURL:         v.GetString("builder_url"),
-		ManagerURL:         v.GetString("manager_url"),
-		TaskTimeoutSeconds: v.GetInt("task_timeout_seconds"),
+		BuilderURL:          v.GetString("builder_url"),
+		ManagerURL:          v.GetString("manager_url"),
+		WorkerCPURequest:    v.GetString("worker_cpu_request"),
+		WorkerMemoryRequest: v.GetString("worker_memory_request"),
+		WorkerCPULimit:      v.GetString("worker_cpu_limit"),
+		WorkerMemoryLimit:   v.GetString("worker_memory_limit"),
+		TaskTimeoutSeconds:  v.GetInt("task_timeout_seconds"),
 		TaskMaxRetries:     v.GetInt("task_max_retries"),
 		LogLevel:           v.GetString("log_level"),
 		LogFormat:          v.GetString("log_format"),

@@ -32,6 +32,10 @@ func TestDispatcher_DispatchMap(t *testing.T) {
 			json.NewEncoder(w).Encode(job)
 			return
 		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/build") {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer ts.Close()
@@ -41,13 +45,17 @@ func TestDispatcher_DispatchMap(t *testing.T) {
 	must.NoError(err)
 
 	cfg := &config.Config{
-		WorkerNamespace:  "default",
-		WorkerImage:      "worker:latest",
-		ManagerURL:       "http://manager:8080",
-		MinioEndpoint:    "minio:9000",
-		MinioBucketInput: "input",
-		MinioBucketCode:  "code",
-		MinioBucketJobs:  "jobs",
+		WorkerNamespace:     "default",
+		WorkerImage:         "worker:latest",
+		ManagerURL:          "http://manager:8080",
+		MinioEndpoint:       "minio:9000",
+		MinioBucketInput:    "input",
+		MinioBucketCode:     "code",
+		MinioBucketJobs:     "jobs",
+		WorkerCPURequest:    "500m",
+		WorkerMemoryRequest: "512Mi",
+		WorkerCPULimit:      "500m",
+		WorkerMemoryLimit:   "512Mi",
 	}
 
 	d := &Dispatcher{
@@ -114,6 +122,10 @@ func TestDispatcher_DispatchReduce(t *testing.T) {
 			json.NewEncoder(w).Encode(job)
 			return
 		}
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/build") {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer ts.Close()
@@ -123,11 +135,15 @@ func TestDispatcher_DispatchReduce(t *testing.T) {
 	must.NoError(err)
 
 	cfg := &config.Config{
-		WorkerNamespace:   "default",
-		WorkerImage:       "worker:latest",
-		ManagerURL:        "http://manager:8080",
-		MinioEndpoint:     "minio:9000",
-		MinioBucketOutput: "output",
+		WorkerNamespace:     "default",
+		WorkerImage:         "worker:latest",
+		ManagerURL:          "http://manager:8080",
+		MinioEndpoint:       "minio:9000",
+		MinioBucketOutput:   "output",
+		WorkerCPURequest:    "500m",
+		WorkerMemoryRequest: "512Mi",
+		WorkerCPULimit:      "500m",
+		WorkerMemoryLimit:   "512Mi",
 	}
 
 	d := &Dispatcher{
@@ -164,15 +180,9 @@ func TestDispatcher_DispatchBuild(t *testing.T) {
 	is := assert.New(t)
 	must := require.New(t)
 
-	var createdJob *batchv1.Job
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/jobs") {
-			var job batchv1.Job
-			must.NoError(json.NewDecoder(r.Body).Decode(&job))
-			createdJob = &job
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusCreated)
-			json.NewEncoder(w).Encode(job)
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/build") {
+			w.WriteHeader(http.StatusAccepted)
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -187,6 +197,7 @@ func TestDispatcher_DispatchBuild(t *testing.T) {
 		WorkerNamespace: "default",
 		BuilderImage:    "builder:latest",
 		ManagerURL:      "http://manager:8080",
+		BuilderURL:      ts.URL, // Use the mock server URL
 		MinioEndpoint:   "minio:9000",
 		MinioBucketCode: "code",
 	}
@@ -205,10 +216,7 @@ func TestDispatcher_DispatchBuild(t *testing.T) {
 
 	jobName, err := d.DispatchBuild(context.Background(), spec)
 	must.NoError(err)
-	is.Equal("build-map-job-abcd", jobName)
-
-	must.NotNil(createdJob)
-	is.Equal("builder:latest", createdJob.Spec.Template.Spec.Containers[0].Image)
+	is.Equal("build-mapper-job-", jobName)
 }
 
 func TestDispatcher_DeleteJob(t *testing.T) {

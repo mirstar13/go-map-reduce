@@ -29,6 +29,10 @@ data:
   WORKER_NAMESPACE:       "mapreduce"
   WORKER_IMAGE:           "starpal/mapreduce-worker:latest"
   BUILDER_IMAGE:          "starpal/mapreduce-builder:latest"
+  WORKER_CPU_REQUEST:     "1000m"
+  WORKER_CPU_LIMIT:       "2000m"
+  WORKER_MEMORY_REQUEST:  "1Gi"
+  WORKER_MEMORY_LIMIT:    "2Gi"
   TASK_TIMEOUT_SECONDS:   "900"
   TASK_MAX_RETRIES:       "3"
 

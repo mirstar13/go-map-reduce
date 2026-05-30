@@ -2,10 +2,10 @@ BUILDX_BUILDER := mapreduce-builder
 DOCKER_REGISTRY := starpal
 PLATFORMS := linux/amd64
 
-.PHONY: minikube-start minikube-start-prod test-coverage docker-build docker-build-push buildx-setup buildx-cleanup
+.PHONY: minikube-star test-coverage docker-build docker-build-push buildx-setup buildx-cleanup
 
 minikube-start:
-	minikube start --cpus=4 --memory=6144 --disk-size=20g --driver=docker
+	minikube start --cpus=max --memory=max --disk-size=20g --driver=docker
 	kubectl apply -f ./manifests/
 	minikube addons enable ingress
 	minikube addons enable ingress-dns
@@ -37,5 +37,3 @@ docker-build-push: buildx-setup
 	@docker buildx build --platform $(PLATFORMS) --push -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service .
 	@docker buildx build --platform $(PLATFORMS) --push -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker .
 	@docker buildx build --platform $(PLATFORMS) --push -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder .
-	@go test ./... -coverprofile='coverage.out' || true
-	@go tool cover -html='coverage.out'

@@ -99,7 +99,14 @@ func (h *JobHandler) SubmitJob(c fiber.Ctx) error {
 	}
 	if req.NumMappers < 1 || req.NumReducers < 1 {
 		// Auto-calculate based on input size
-		size, err := h.splitter.GetSize(c.Context(), req.InputPath)
+		var size int64
+		var err error
+		if h.splitter != nil {
+			size, err = h.splitter.GetSize(c.Context(), req.InputPath)
+		} else {
+			err = fmt.Errorf("splitter not available")
+		}
+
 		if err == nil {
 			sizeMB := float64(size) / (1024 * 1024)
 			const thresholdMB = 10.0 // 1 mapper per 10MB

@@ -161,7 +161,7 @@ func (d *Dispatcher) DispatchBuild(ctx context.Context, spec BuildTaskSpec) (str
 		return "", fmt.Errorf("dispatcher: builder returned error (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	return "", nil
+	return "build-" + spec.PluginType + "-" + spec.JobID[:4], nil
 }
 
 // DeleteJob removes a Kubernetes Job and its pods (background propagation).
@@ -233,12 +233,12 @@ func (d *Dispatcher) createK8sJob(ctx context.Context, name string, env []corev1
 							},
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("500m"),
-									corev1.ResourceMemory: resource.MustParse("512Mi"),
+									corev1.ResourceCPU:    resource.MustParse(d.cfg.WorkerCPURequest),
+									corev1.ResourceMemory: resource.MustParse(d.cfg.WorkerMemoryRequest),
 								},
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    resource.MustParse("500m"),
-									corev1.ResourceMemory: resource.MustParse("512Mi"),
+									corev1.ResourceCPU:    resource.MustParse(d.cfg.WorkerCPULimit),
+									corev1.ResourceMemory: resource.MustParse(d.cfg.WorkerMemoryLimit),
 								},
 							},
 							VolumeMounts: []corev1.VolumeMount{

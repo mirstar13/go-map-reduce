@@ -175,6 +175,26 @@ spec:
                 configMapKeyRef:
                   name: mapreduce-config
                   key: WORKER_NAMESPACE
+            - name: WORKER_CPU_REQUEST
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: WORKER_CPU_REQUEST
+            - name: WORKER_CPU_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: WORKER_CPU_LIMIT
+            - name: WORKER_MEMORY_REQUEST
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: WORKER_MEMORY_REQUEST
+            - name: WORKER_MEMORY_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: mapreduce-config
+                  key: WORKER_MEMORY_LIMIT
             - name: TASK_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
