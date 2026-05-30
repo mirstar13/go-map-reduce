@@ -97,12 +97,21 @@ func (m *MinioClient) upload(
 
 // objectKey creates a unique object key to avoid collisions.
 // Format: {prefix}/{uuid}-{original-filename}
+// If filename contains slashes, the directory structure is preserved before the UUID.
 func objectKey(prefix, filename string) string {
 	id := uuid.New().String()
+	dir := filepath.Dir(filename)
 	base := filepath.Base(filename)
+
 	// Sanitise: replace spaces with underscores.
 	base = strings.ReplaceAll(base, " ", "_")
-	return fmt.Sprintf("%s/%s-%s", prefix, id, base)
+
+	if dir == "." || dir == "/" {
+		return fmt.Sprintf("%s/%s-%s", prefix, id, base)
+	}
+	// Preserve directory structure
+	dir = filepath.ToSlash(dir)
+	return fmt.Sprintf("%s/%s/%s-%s", prefix, dir, id, base)
 }
 
 // contentType infers a content-type from the file extension.

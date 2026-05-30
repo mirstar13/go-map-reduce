@@ -153,6 +153,10 @@ func (w *worker) runMap(ctx context.Context) error {
 
 	// Execute mapper on each input line via streaming with batching
 	scanner := bufio.NewScanner(inputObj)
+	const maxTokenSize = 10 * 1024 * 1024 // 10MB
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, maxTokenSize)
+
 	lineCount := 0
 	const batchSize = 1000
 	var batch []plugin.MapInput
@@ -304,6 +308,8 @@ func (w *worker) sortAndCombine(path string, combiner plugin.Combiner) (string, 
 	defer output.Close()
 
 	scanner := bufio.NewScanner(sf)
+	const maxTokenSize = 10 * 1024 * 1024 // 10MB
+	scanner.Buffer(make([]byte, 64*1024), maxTokenSize)
 	var currentKey string
 	var currentValues []string
 
@@ -432,6 +438,8 @@ func (w *worker) runReduce(ctx context.Context) error {
 	bw := bufio.NewWriter(of)
 
 	scanner := bufio.NewScanner(sf)
+	const maxTokenSize = 10 * 1024 * 1024 // 10MB
+	scanner.Buffer(make([]byte, 64*1024), maxTokenSize)
 	var currentKey string
 	var currentValues []string
 	lineCount := 0
@@ -524,6 +532,8 @@ func (w *worker) externalSort(inputFile string) (string, error) {
 
 	var chunks []string
 	scanner := bufio.NewScanner(f)
+	const maxTokenSize = 10 * 1024 * 1024 // 10MB
+	scanner.Buffer(make([]byte, 64*1024), maxTokenSize)
 	var currentChunk []string
 	var currentSize int
 
@@ -610,6 +620,8 @@ func (w *worker) mergeChunks(chunks []string) (string, error) {
 			return "", err
 		}
 		scanner := bufio.NewScanner(f)
+	const maxTokenSize = 10 * 1024 * 1024 // 10MB
+	scanner.Buffer(make([]byte, 64*1024), maxTokenSize)
 		if scanner.Scan() {
 			heap.Push(h, &mergeItem{
 				line:    scanner.Text(),

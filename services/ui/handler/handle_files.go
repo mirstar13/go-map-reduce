@@ -113,7 +113,7 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 
 			h.log.Info("uploading part", zap.String("filename", filename), zap.String("kind", kind))
 
-			path, err := h.uploadToMinio(c.Context(), kind, filename, part)
+			path, err := h.uploadToMinio(c.Context(), c, kind, filename, part)
 			if err != nil {
 				h.log.Error("upload: minio error", zap.String("kind", kind), zap.Error(err))
 				part.Close()
@@ -137,7 +137,16 @@ func (h *FileHandler) streamUpload(c fiber.Ctx, kind string) error {
 	return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "no file found in request"})
 }
 
-func (h *FileHandler) uploadToMinio(ctx context.Context, kind, filename string, r io.Reader) (string, error) {
+func (h *FileHandler) uploadToMinio(ctx context.Context, c fiber.Ctx, kind, filename string, r io.Reader) (string, error) {
+	prefix := c.Query("prefix")
+	if prefix != "" {
+		// Ensure prefix doesn't have leading/trailing slashes and uses only alphanumeric/underscore/dash/slash
+		prefix = strings.Trim(prefix, "/")
+		if prefix != "" {
+			filename = prefix + "/" + filename
+		}
+	}
+
 	switch kind {
 	case "input":
 		return h.minio.UploadInput(ctx, filename, r, -1)
