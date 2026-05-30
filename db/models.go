@@ -79,4 +79,5 @@ type WorkflowDependency struct {
 	WorkflowID uuid.UUID `json:"workflow_id"`
 	StageName  string    `json:"stage_name"`
 	DependsOn  string    `json:"depends_on"`
+	CreatedAt  time.Time `json:"created_at"`
 }

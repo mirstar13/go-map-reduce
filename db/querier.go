@@ -14,8 +14,8 @@ import (
 type Querier interface {
 	AddWorkflowDependency(ctx context.Context, arg AddWorkflowDependencyParams) error
 	CancelJob(ctx context.Context, jobID uuid.UUID) error
-	// Returns all parents of a stage and their status
-	CheckStageDependencies(ctx context.Context, arg CheckStageDependenciesParams) ([]string, error)
+	// Returns the number of parents that are not yet COMPLETED
+	CheckStageDependencies(ctx context.Context, arg CheckStageDependenciesParams) (int64, error)
 	// Useful for an admin dashboard or metrics endpoint.
 	CountJobsByStatus(ctx context.Context) ([]CountJobsByStatusRow, error)
 	// Atomically read how many tasks are COMPLETED vs total.

@@ -27,11 +27,11 @@ func (q *Queries) AddWorkflowDependency(ctx context.Context, arg AddWorkflowDepe
 	return err
 }
 
-const checkStageDependencies = `-- name: CheckStageDependencies :many
-SELECT j.status 
+const checkStageDependencies = `-- name: CheckStageDependencies :one
+SELECT COUNT(*)
 FROM workflow_dependencies d
 JOIN jobs j ON j.workflow_id = d.workflow_id AND j.stage_name = d.depends_on
-WHERE d.workflow_id = $1 AND d.stage_name = $2
+WHERE d.workflow_id = $1 AND d.stage_name = $2 AND j.status != 'COMPLETED'
 `
 
 type CheckStageDependenciesParams struct {
@@ -39,28 +39,12 @@ type CheckStageDependenciesParams struct {
 	StageName  string    `json:"stage_name"`
 }
 
-// Returns all parents of a stage and their status
-func (q *Queries) CheckStageDependencies(ctx context.Context, arg CheckStageDependenciesParams) ([]string, error) {
-	rows, err := q.query(ctx, q.checkStageDependenciesStmt, checkStageDependencies, arg.WorkflowID, arg.StageName)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []string{}
-	for rows.Next() {
-		var status string
-		if err := rows.Scan(&status); err != nil {
-			return nil, err
-		}
-		items = append(items, status)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+// Returns the number of parents that are not yet COMPLETED
+func (q *Queries) CheckStageDependencies(ctx context.Context, arg CheckStageDependenciesParams) (int64, error) {
+	row := q.queryRow(ctx, q.checkStageDependenciesStmt, checkStageDependencies, arg.WorkflowID, arg.StageName)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createWorkflow = `-- name: CreateWorkflow :one
@@ -145,7 +129,9 @@ func (q *Queries) GetWorkflow(ctx context.Context, workflowID uuid.UUID) (Workfl
 }
 
 const getWorkflowStages = `-- name: GetWorkflowStages :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs WHERE workflow_id = $1
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs 
+WHERE workflow_id = $1
+ORDER BY submitted_at ASC
 `
 
 func (q *Queries) GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUID) ([]Job, error) {
