@@ -4,14 +4,24 @@ import (
 	"github.com/mirstar13/go-map-reduce/cmd/cli/client"
 )
 
+type panel int
+
+const (
+	jobsPanel panel = iota
+	healthPanel
+	logsPanel
+)
+
 type model struct {
 	client   *client.Client
-	jobs     []interface{} // Placeholder for now
+	focused  panel
 	quitting bool
+	jobs     []interface{}
 }
 
 func initialModel() model {
 	return model{
-		jobs: []interface{}{},
+		jobs:    []interface{}{},
+		focused: jobsPanel,
 	}
 }

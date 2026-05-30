@@ -5,6 +5,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func (m model) Init() tea.Cmd {
@@ -27,7 +28,23 @@ func (m model) View() string {
 	if m.quitting {
 		return "Bye!\n"
 	}
-	return "MapReduce Mission Control (Press q to quit)\n"
+
+	header := " MAPREDUCE MISSION CONTROL "
+
+	// Top Row
+	health := panelStyle.Render("Health: OK")
+	progress := panelStyle.Render("Progress: 0%")
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, health, progress)
+
+	// Bottom Row
+	jobs := panelStyle.Render("Job List...")
+	if m.focused == jobsPanel {
+		jobs = focusedPanelStyle.Render("Job List...")
+	}
+	logs := panelStyle.Render("Logs...")
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, jobs, logs)
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, topRow, bottomRow)
 }
 
 func main() {
