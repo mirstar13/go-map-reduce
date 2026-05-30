@@ -26,6 +26,28 @@ FROM workflow_dependencies d
 JOIN jobs j ON j.workflow_id = d.workflow_id AND j.stage_name = d.depends_on
 WHERE d.workflow_id = $1 AND d.stage_name = $2 AND j.status != 'COMPLETED';
 
+-- name: GetWorkflowStatus :one
+SELECT status FROM workflows WHERE workflow_id = $1;
+
+-- name: GetWorkflowDependencies :many
+SELECT stage_name, depends_on FROM workflow_dependencies 
+WHERE workflow_id = $1;
+
+-- name: GetParentsOutputPaths :many
+SELECT j.output_path
+FROM workflow_dependencies d
+JOIN jobs j ON j.workflow_id = d.workflow_id AND j.stage_name = d.depends_on
+WHERE d.workflow_id = $1 AND d.stage_name = $2;
+
+-- name: GetJobByWorkflowStage :one
+SELECT * FROM jobs
+WHERE workflow_id = $1 AND stage_name = $2
+LIMIT 1;
+
+-- name: GetCompletedWorkflowStagesCount :one
+SELECT COUNT(*) FROM jobs
+WHERE workflow_id = $1 AND status = 'COMPLETED';
+
 -- name: UpdateWorkflowStatus :one
 UPDATE workflows
 SET status = $2

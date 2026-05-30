@@ -8,9 +8,11 @@ INSERT INTO jobs (
     output_path,
     num_mappers,
     num_reducers,
-    input_format
+    input_format,
+    workflow_id,
+    stage_name
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 RETURNING *;
 
@@ -90,6 +92,14 @@ WHERE job_id = $1;
 -- name: UpdateJobReducerPath :exec
 UPDATE jobs
 SET reducer_path = $2
+WHERE job_id = $1;
+
+
+-- name: UpdateJobInputAndStatus :exec
+UPDATE jobs
+SET 
+    input_path = $2,
+    status = $3
 WHERE job_id = $1;
 
 

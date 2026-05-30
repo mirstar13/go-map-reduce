@@ -71,23 +71,27 @@ INSERT INTO jobs (
     output_path,
     num_mappers,
     num_reducers,
-    input_format
+    input_format,
+    workflow_id,
+    stage_name
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
 )
 RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name
 `
 
 type CreateJobParams struct {
-	OwnerUserID  string `json:"owner_user_id"`
-	OwnerReplica string `json:"owner_replica"`
-	MapperPath   string `json:"mapper_path"`
-	ReducerPath  string `json:"reducer_path"`
-	InputPath    string `json:"input_path"`
-	OutputPath   string `json:"output_path"`
-	NumMappers   int32  `json:"num_mappers"`
-	NumReducers  int32  `json:"num_reducers"`
-	InputFormat  string `json:"input_format"`
+	OwnerUserID  string         `json:"owner_user_id"`
+	OwnerReplica string         `json:"owner_replica"`
+	MapperPath   string         `json:"mapper_path"`
+	ReducerPath  string         `json:"reducer_path"`
+	InputPath    string         `json:"input_path"`
+	OutputPath   string         `json:"output_path"`
+	NumMappers   int32          `json:"num_mappers"`
+	NumReducers  int32          `json:"num_reducers"`
+	InputFormat  string         `json:"input_format"`
+	WorkflowID   uuid.NullUUID  `json:"workflow_id"`
+	StageName    sql.NullString `json:"stage_name"`
 }
 
 func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, error) {
@@ -101,6 +105,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		arg.NumMappers,
 		arg.NumReducers,
 		arg.InputFormat,
+		arg.WorkflowID,
+		arg.StageName,
 	)
 	var i Job
 	err := row.Scan(
@@ -324,6 +330,25 @@ func (q *Queries) GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job,
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateJobInputAndStatus = `-- name: UpdateJobInputAndStatus :exec
+UPDATE jobs
+SET 
+    input_path = $2,
+    status = $3
+WHERE job_id = $1
+`
+
+type UpdateJobInputAndStatusParams struct {
+	JobID     uuid.UUID `json:"job_id"`
+	InputPath string    `json:"input_path"`
+	Status    string    `json:"status"`
+}
+
+func (q *Queries) UpdateJobInputAndStatus(ctx context.Context, arg UpdateJobInputAndStatusParams) error {
+	_, err := q.exec(ctx, q.updateJobInputAndStatusStmt, updateJobInputAndStatus, arg.JobID, arg.InputPath, arg.Status)
+	return err
 }
 
 const updateJobMapperPath = `-- name: UpdateJobMapperPath :exec

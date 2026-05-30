@@ -72,11 +72,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getCachedPluginStmt, err = db.PrepareContext(ctx, getCachedPlugin); err != nil {
 		return nil, fmt.Errorf("error preparing query GetCachedPlugin: %w", err)
 	}
+	if q.getCompletedWorkflowStagesCountStmt, err = db.PrepareContext(ctx, getCompletedWorkflowStagesCount); err != nil {
+		return nil, fmt.Errorf("error preparing query GetCompletedWorkflowStagesCount: %w", err)
+	}
 	if q.getDownstreamStagesStmt, err = db.PrepareContext(ctx, getDownstreamStages); err != nil {
 		return nil, fmt.Errorf("error preparing query GetDownstreamStages: %w", err)
 	}
 	if q.getJobStmt, err = db.PrepareContext(ctx, getJob); err != nil {
 		return nil, fmt.Errorf("error preparing query GetJob: %w", err)
+	}
+	if q.getJobByWorkflowStageStmt, err = db.PrepareContext(ctx, getJobByWorkflowStage); err != nil {
+		return nil, fmt.Errorf("error preparing query GetJobByWorkflowStage: %w", err)
 	}
 	if q.getJobsByUserStmt, err = db.PrepareContext(ctx, getJobsByUser); err != nil {
 		return nil, fmt.Errorf("error preparing query GetJobsByUser: %w", err)
@@ -95,6 +101,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.getMapTasksByJobAndStatusStmt, err = db.PrepareContext(ctx, getMapTasksByJobAndStatus); err != nil {
 		return nil, fmt.Errorf("error preparing query GetMapTasksByJobAndStatus: %w", err)
+	}
+	if q.getParentsOutputPathsStmt, err = db.PrepareContext(ctx, getParentsOutputPaths); err != nil {
+		return nil, fmt.Errorf("error preparing query GetParentsOutputPaths: %w", err)
 	}
 	if q.getPendingMapTasksStmt, err = db.PrepareContext(ctx, getPendingMapTasks); err != nil {
 		return nil, fmt.Errorf("error preparing query GetPendingMapTasks: %w", err)
@@ -126,8 +135,14 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getWorkflowStmt, err = db.PrepareContext(ctx, getWorkflow); err != nil {
 		return nil, fmt.Errorf("error preparing query GetWorkflow: %w", err)
 	}
+	if q.getWorkflowDependenciesStmt, err = db.PrepareContext(ctx, getWorkflowDependencies); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowDependencies: %w", err)
+	}
 	if q.getWorkflowStagesStmt, err = db.PrepareContext(ctx, getWorkflowStages); err != nil {
 		return nil, fmt.Errorf("error preparing query GetWorkflowStages: %w", err)
+	}
+	if q.getWorkflowStatusStmt, err = db.PrepareContext(ctx, getWorkflowStatus); err != nil {
+		return nil, fmt.Errorf("error preparing query GetWorkflowStatus: %w", err)
 	}
 	if q.incrementMapTaskRetryStmt, err = db.PrepareContext(ctx, incrementMapTaskRetry); err != nil {
 		return nil, fmt.Errorf("error preparing query IncrementMapTaskRetry: %w", err)
@@ -155,6 +170,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	}
 	if q.markReduceTaskRunningStmt, err = db.PrepareContext(ctx, markReduceTaskRunning); err != nil {
 		return nil, fmt.Errorf("error preparing query MarkReduceTaskRunning: %w", err)
+	}
+	if q.updateJobInputAndStatusStmt, err = db.PrepareContext(ctx, updateJobInputAndStatus); err != nil {
+		return nil, fmt.Errorf("error preparing query UpdateJobInputAndStatus: %w", err)
 	}
 	if q.updateJobMapperPathStmt, err = db.PrepareContext(ctx, updateJobMapperPath); err != nil {
 		return nil, fmt.Errorf("error preparing query UpdateJobMapperPath: %w", err)
@@ -259,6 +277,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getCachedPluginStmt: %w", cerr)
 		}
 	}
+	if q.getCompletedWorkflowStagesCountStmt != nil {
+		if cerr := q.getCompletedWorkflowStagesCountStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getCompletedWorkflowStagesCountStmt: %w", cerr)
+		}
+	}
 	if q.getDownstreamStagesStmt != nil {
 		if cerr := q.getDownstreamStagesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getDownstreamStagesStmt: %w", cerr)
@@ -267,6 +290,11 @@ func (q *Queries) Close() error {
 	if q.getJobStmt != nil {
 		if cerr := q.getJobStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getJobStmt: %w", cerr)
+		}
+	}
+	if q.getJobByWorkflowStageStmt != nil {
+		if cerr := q.getJobByWorkflowStageStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getJobByWorkflowStageStmt: %w", cerr)
 		}
 	}
 	if q.getJobsByUserStmt != nil {
@@ -297,6 +325,11 @@ func (q *Queries) Close() error {
 	if q.getMapTasksByJobAndStatusStmt != nil {
 		if cerr := q.getMapTasksByJobAndStatusStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getMapTasksByJobAndStatusStmt: %w", cerr)
+		}
+	}
+	if q.getParentsOutputPathsStmt != nil {
+		if cerr := q.getParentsOutputPathsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getParentsOutputPathsStmt: %w", cerr)
 		}
 	}
 	if q.getPendingMapTasksStmt != nil {
@@ -349,9 +382,19 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getWorkflowStmt: %w", cerr)
 		}
 	}
+	if q.getWorkflowDependenciesStmt != nil {
+		if cerr := q.getWorkflowDependenciesStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowDependenciesStmt: %w", cerr)
+		}
+	}
 	if q.getWorkflowStagesStmt != nil {
 		if cerr := q.getWorkflowStagesStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing getWorkflowStagesStmt: %w", cerr)
+		}
+	}
+	if q.getWorkflowStatusStmt != nil {
+		if cerr := q.getWorkflowStatusStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing getWorkflowStatusStmt: %w", cerr)
 		}
 	}
 	if q.incrementMapTaskRetryStmt != nil {
@@ -397,6 +440,11 @@ func (q *Queries) Close() error {
 	if q.markReduceTaskRunningStmt != nil {
 		if cerr := q.markReduceTaskRunningStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing markReduceTaskRunningStmt: %w", cerr)
+		}
+	}
+	if q.updateJobInputAndStatusStmt != nil {
+		if cerr := q.updateJobInputAndStatusStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing updateJobInputAndStatusStmt: %w", cerr)
 		}
 	}
 	if q.updateJobMapperPathStmt != nil {
@@ -466,113 +514,125 @@ func (q *Queries) queryRow(ctx context.Context, stmt *sql.Stmt, query string, ar
 }
 
 type Queries struct {
-	db                               DBTX
-	tx                               *sql.Tx
-	addWorkflowDependencyStmt        *sql.Stmt
-	cancelJobStmt                    *sql.Stmt
-	checkStageDependenciesStmt       *sql.Stmt
-	countJobsByStatusStmt            *sql.Stmt
-	countMapTasksByStatusStmt        *sql.Stmt
-	countReduceTasksByStatusStmt     *sql.Stmt
-	createJobStmt                    *sql.Stmt
-	createMapTaskStmt                *sql.Stmt
-	createReduceTaskStmt             *sql.Stmt
-	createWorkflowStmt               *sql.Stmt
-	deleteCachedPluginStmt           *sql.Stmt
-	deleteJobStmt                    *sql.Stmt
-	failJobStmt                      *sql.Stmt
-	getActiveJobsByReplicaStmt       *sql.Stmt
-	getAllJobsStmt                   *sql.Stmt
-	getCachedPluginStmt              *sql.Stmt
-	getDownstreamStagesStmt          *sql.Stmt
-	getJobStmt                       *sql.Stmt
-	getJobsByUserStmt                *sql.Stmt
-	getMapTaskStmt                   *sql.Stmt
-	getMapTaskJobNamesStmt           *sql.Stmt
-	getMapTaskOutputLocationsStmt    *sql.Stmt
-	getMapTasksByJobStmt             *sql.Stmt
-	getMapTasksByJobAndStatusStmt    *sql.Stmt
-	getPendingMapTasksStmt           *sql.Stmt
-	getPendingReduceTasksStmt        *sql.Stmt
-	getReduceTaskStmt                *sql.Stmt
-	getReduceTaskJobNamesStmt        *sql.Stmt
-	getReduceTaskOutputPathsStmt     *sql.Stmt
-	getReduceTasksByJobStmt          *sql.Stmt
-	getReduceTasksByJobAndStatusStmt *sql.Stmt
-	getStaleRunningMapTasksStmt      *sql.Stmt
-	getStaleRunningReduceTasksStmt   *sql.Stmt
-	getWorkflowStmt                  *sql.Stmt
-	getWorkflowStagesStmt            *sql.Stmt
-	incrementMapTaskRetryStmt        *sql.Stmt
-	incrementReduceTaskRetryStmt     *sql.Stmt
-	listStalePluginsStmt             *sql.Stmt
-	markMapTaskCompletedStmt         *sql.Stmt
-	markMapTaskFailedStmt            *sql.Stmt
-	markMapTaskRunningStmt           *sql.Stmt
-	markReduceTaskCompletedStmt      *sql.Stmt
-	markReduceTaskFailedStmt         *sql.Stmt
-	markReduceTaskRunningStmt        *sql.Stmt
-	updateJobMapperPathStmt          *sql.Stmt
-	updateJobReducerPathStmt         *sql.Stmt
-	updateJobStatusStmt              *sql.Stmt
-	updatePluginLastUsedStmt         *sql.Stmt
-	updateWorkflowStatusStmt         *sql.Stmt
-	upsertCachedPluginStmt           *sql.Stmt
+	db                                  DBTX
+	tx                                  *sql.Tx
+	addWorkflowDependencyStmt           *sql.Stmt
+	cancelJobStmt                       *sql.Stmt
+	checkStageDependenciesStmt          *sql.Stmt
+	countJobsByStatusStmt               *sql.Stmt
+	countMapTasksByStatusStmt           *sql.Stmt
+	countReduceTasksByStatusStmt        *sql.Stmt
+	createJobStmt                       *sql.Stmt
+	createMapTaskStmt                   *sql.Stmt
+	createReduceTaskStmt                *sql.Stmt
+	createWorkflowStmt                  *sql.Stmt
+	deleteCachedPluginStmt              *sql.Stmt
+	deleteJobStmt                       *sql.Stmt
+	failJobStmt                         *sql.Stmt
+	getActiveJobsByReplicaStmt          *sql.Stmt
+	getAllJobsStmt                      *sql.Stmt
+	getCachedPluginStmt                 *sql.Stmt
+	getCompletedWorkflowStagesCountStmt *sql.Stmt
+	getDownstreamStagesStmt             *sql.Stmt
+	getJobStmt                          *sql.Stmt
+	getJobByWorkflowStageStmt           *sql.Stmt
+	getJobsByUserStmt                   *sql.Stmt
+	getMapTaskStmt                      *sql.Stmt
+	getMapTaskJobNamesStmt              *sql.Stmt
+	getMapTaskOutputLocationsStmt       *sql.Stmt
+	getMapTasksByJobStmt                *sql.Stmt
+	getMapTasksByJobAndStatusStmt       *sql.Stmt
+	getParentsOutputPathsStmt           *sql.Stmt
+	getPendingMapTasksStmt              *sql.Stmt
+	getPendingReduceTasksStmt           *sql.Stmt
+	getReduceTaskStmt                   *sql.Stmt
+	getReduceTaskJobNamesStmt           *sql.Stmt
+	getReduceTaskOutputPathsStmt        *sql.Stmt
+	getReduceTasksByJobStmt             *sql.Stmt
+	getReduceTasksByJobAndStatusStmt    *sql.Stmt
+	getStaleRunningMapTasksStmt         *sql.Stmt
+	getStaleRunningReduceTasksStmt      *sql.Stmt
+	getWorkflowStmt                     *sql.Stmt
+	getWorkflowDependenciesStmt         *sql.Stmt
+	getWorkflowStagesStmt               *sql.Stmt
+	getWorkflowStatusStmt               *sql.Stmt
+	incrementMapTaskRetryStmt           *sql.Stmt
+	incrementReduceTaskRetryStmt        *sql.Stmt
+	listStalePluginsStmt                *sql.Stmt
+	markMapTaskCompletedStmt            *sql.Stmt
+	markMapTaskFailedStmt               *sql.Stmt
+	markMapTaskRunningStmt              *sql.Stmt
+	markReduceTaskCompletedStmt         *sql.Stmt
+	markReduceTaskFailedStmt            *sql.Stmt
+	markReduceTaskRunningStmt           *sql.Stmt
+	updateJobInputAndStatusStmt         *sql.Stmt
+	updateJobMapperPathStmt             *sql.Stmt
+	updateJobReducerPathStmt            *sql.Stmt
+	updateJobStatusStmt                 *sql.Stmt
+	updatePluginLastUsedStmt            *sql.Stmt
+	updateWorkflowStatusStmt            *sql.Stmt
+	upsertCachedPluginStmt              *sql.Stmt
 }
 
 func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 	return &Queries{
-		db:                               tx,
-		tx:                               tx,
-		addWorkflowDependencyStmt:        q.addWorkflowDependencyStmt,
-		cancelJobStmt:                    q.cancelJobStmt,
-		checkStageDependenciesStmt:       q.checkStageDependenciesStmt,
-		countJobsByStatusStmt:            q.countJobsByStatusStmt,
-		countMapTasksByStatusStmt:        q.countMapTasksByStatusStmt,
-		countReduceTasksByStatusStmt:     q.countReduceTasksByStatusStmt,
-		createJobStmt:                    q.createJobStmt,
-		createMapTaskStmt:                q.createMapTaskStmt,
-		createReduceTaskStmt:             q.createReduceTaskStmt,
-		createWorkflowStmt:               q.createWorkflowStmt,
-		deleteCachedPluginStmt:           q.deleteCachedPluginStmt,
-		deleteJobStmt:                    q.deleteJobStmt,
-		failJobStmt:                      q.failJobStmt,
-		getActiveJobsByReplicaStmt:       q.getActiveJobsByReplicaStmt,
-		getAllJobsStmt:                   q.getAllJobsStmt,
-		getCachedPluginStmt:              q.getCachedPluginStmt,
-		getDownstreamStagesStmt:          q.getDownstreamStagesStmt,
-		getJobStmt:                       q.getJobStmt,
-		getJobsByUserStmt:                q.getJobsByUserStmt,
-		getMapTaskStmt:                   q.getMapTaskStmt,
-		getMapTaskJobNamesStmt:           q.getMapTaskJobNamesStmt,
-		getMapTaskOutputLocationsStmt:    q.getMapTaskOutputLocationsStmt,
-		getMapTasksByJobStmt:             q.getMapTasksByJobStmt,
-		getMapTasksByJobAndStatusStmt:    q.getMapTasksByJobAndStatusStmt,
-		getPendingMapTasksStmt:           q.getPendingMapTasksStmt,
-		getPendingReduceTasksStmt:        q.getPendingReduceTasksStmt,
-		getReduceTaskStmt:                q.getReduceTaskStmt,
-		getReduceTaskJobNamesStmt:        q.getReduceTaskJobNamesStmt,
-		getReduceTaskOutputPathsStmt:     q.getReduceTaskOutputPathsStmt,
-		getReduceTasksByJobStmt:          q.getReduceTasksByJobStmt,
-		getReduceTasksByJobAndStatusStmt: q.getReduceTasksByJobAndStatusStmt,
-		getStaleRunningMapTasksStmt:      q.getStaleRunningMapTasksStmt,
-		getStaleRunningReduceTasksStmt:   q.getStaleRunningReduceTasksStmt,
-		getWorkflowStmt:                  q.getWorkflowStmt,
-		getWorkflowStagesStmt:            q.getWorkflowStagesStmt,
-		incrementMapTaskRetryStmt:        q.incrementMapTaskRetryStmt,
-		incrementReduceTaskRetryStmt:     q.incrementReduceTaskRetryStmt,
-		listStalePluginsStmt:             q.listStalePluginsStmt,
-		markMapTaskCompletedStmt:         q.markMapTaskCompletedStmt,
-		markMapTaskFailedStmt:            q.markMapTaskFailedStmt,
-		markMapTaskRunningStmt:           q.markMapTaskRunningStmt,
-		markReduceTaskCompletedStmt:      q.markReduceTaskCompletedStmt,
-		markReduceTaskFailedStmt:         q.markReduceTaskFailedStmt,
-		markReduceTaskRunningStmt:        q.markReduceTaskRunningStmt,
-		updateJobMapperPathStmt:          q.updateJobMapperPathStmt,
-		updateJobReducerPathStmt:         q.updateJobReducerPathStmt,
-		updateJobStatusStmt:              q.updateJobStatusStmt,
-		updatePluginLastUsedStmt:         q.updatePluginLastUsedStmt,
-		updateWorkflowStatusStmt:         q.updateWorkflowStatusStmt,
-		upsertCachedPluginStmt:           q.upsertCachedPluginStmt,
+		db:                                  tx,
+		tx:                                  tx,
+		addWorkflowDependencyStmt:           q.addWorkflowDependencyStmt,
+		cancelJobStmt:                       q.cancelJobStmt,
+		checkStageDependenciesStmt:          q.checkStageDependenciesStmt,
+		countJobsByStatusStmt:               q.countJobsByStatusStmt,
+		countMapTasksByStatusStmt:           q.countMapTasksByStatusStmt,
+		countReduceTasksByStatusStmt:        q.countReduceTasksByStatusStmt,
+		createJobStmt:                       q.createJobStmt,
+		createMapTaskStmt:                   q.createMapTaskStmt,
+		createReduceTaskStmt:                q.createReduceTaskStmt,
+		createWorkflowStmt:                  q.createWorkflowStmt,
+		deleteCachedPluginStmt:              q.deleteCachedPluginStmt,
+		deleteJobStmt:                       q.deleteJobStmt,
+		failJobStmt:                         q.failJobStmt,
+		getActiveJobsByReplicaStmt:          q.getActiveJobsByReplicaStmt,
+		getAllJobsStmt:                      q.getAllJobsStmt,
+		getCachedPluginStmt:                 q.getCachedPluginStmt,
+		getCompletedWorkflowStagesCountStmt: q.getCompletedWorkflowStagesCountStmt,
+		getDownstreamStagesStmt:             q.getDownstreamStagesStmt,
+		getJobStmt:                          q.getJobStmt,
+		getJobByWorkflowStageStmt:           q.getJobByWorkflowStageStmt,
+		getJobsByUserStmt:                   q.getJobsByUserStmt,
+		getMapTaskStmt:                      q.getMapTaskStmt,
+		getMapTaskJobNamesStmt:              q.getMapTaskJobNamesStmt,
+		getMapTaskOutputLocationsStmt:       q.getMapTaskOutputLocationsStmt,
+		getMapTasksByJobStmt:                q.getMapTasksByJobStmt,
+		getMapTasksByJobAndStatusStmt:       q.getMapTasksByJobAndStatusStmt,
+		getParentsOutputPathsStmt:           q.getParentsOutputPathsStmt,
+		getPendingMapTasksStmt:              q.getPendingMapTasksStmt,
+		getPendingReduceTasksStmt:           q.getPendingReduceTasksStmt,
+		getReduceTaskStmt:                   q.getReduceTaskStmt,
+		getReduceTaskJobNamesStmt:           q.getReduceTaskJobNamesStmt,
+		getReduceTaskOutputPathsStmt:        q.getReduceTaskOutputPathsStmt,
+		getReduceTasksByJobStmt:             q.getReduceTasksByJobStmt,
+		getReduceTasksByJobAndStatusStmt:    q.getReduceTasksByJobAndStatusStmt,
+		getStaleRunningMapTasksStmt:         q.getStaleRunningMapTasksStmt,
+		getStaleRunningReduceTasksStmt:      q.getStaleRunningReduceTasksStmt,
+		getWorkflowStmt:                     q.getWorkflowStmt,
+		getWorkflowDependenciesStmt:         q.getWorkflowDependenciesStmt,
+		getWorkflowStagesStmt:               q.getWorkflowStagesStmt,
+		getWorkflowStatusStmt:               q.getWorkflowStatusStmt,
+		incrementMapTaskRetryStmt:           q.incrementMapTaskRetryStmt,
+		incrementReduceTaskRetryStmt:        q.incrementReduceTaskRetryStmt,
+		listStalePluginsStmt:                q.listStalePluginsStmt,
+		markMapTaskCompletedStmt:            q.markMapTaskCompletedStmt,
+		markMapTaskFailedStmt:               q.markMapTaskFailedStmt,
+		markMapTaskRunningStmt:              q.markMapTaskRunningStmt,
+		markReduceTaskCompletedStmt:         q.markReduceTaskCompletedStmt,
+		markReduceTaskFailedStmt:            q.markReduceTaskFailedStmt,
+		markReduceTaskRunningStmt:           q.markReduceTaskRunningStmt,
+		updateJobInputAndStatusStmt:         q.updateJobInputAndStatusStmt,
+		updateJobMapperPathStmt:             q.updateJobMapperPathStmt,
+		updateJobReducerPathStmt:            q.updateJobReducerPathStmt,
+		updateJobStatusStmt:                 q.updateJobStatusStmt,
+		updatePluginLastUsedStmt:            q.updatePluginLastUsedStmt,
+		updateWorkflowStatusStmt:            q.updateWorkflowStatusStmt,
+		upsertCachedPluginStmt:              q.upsertCachedPluginStmt,
 	}
 }

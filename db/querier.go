@@ -34,8 +34,10 @@ type Querier interface {
 	GetActiveJobsByReplica(ctx context.Context, ownerReplica string) ([]Job, error)
 	GetAllJobs(ctx context.Context) ([]Job, error)
 	GetCachedPlugin(ctx context.Context, sourceHash string) (PluginCache, error)
+	GetCompletedWorkflowStagesCount(ctx context.Context, workflowID uuid.NullUUID) (int64, error)
 	GetDownstreamStages(ctx context.Context, arg GetDownstreamStagesParams) ([]string, error)
 	GetJob(ctx context.Context, jobID uuid.UUID) (Job, error)
+	GetJobByWorkflowStage(ctx context.Context, arg GetJobByWorkflowStageParams) (Job, error)
 	GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job, error)
 	GetMapTask(ctx context.Context, taskID uuid.UUID) (MapTask, error)
 	GetMapTaskJobNames(ctx context.Context, jobID uuid.UUID) ([]sql.NullString, error)
@@ -44,6 +46,7 @@ type Querier interface {
 	GetMapTaskOutputLocations(ctx context.Context, jobID uuid.UUID) ([]GetMapTaskOutputLocationsRow, error)
 	GetMapTasksByJob(ctx context.Context, jobID uuid.UUID) ([]MapTask, error)
 	GetMapTasksByJobAndStatus(ctx context.Context, arg GetMapTasksByJobAndStatusParams) ([]MapTask, error)
+	GetParentsOutputPaths(ctx context.Context, arg GetParentsOutputPathsParams) ([]string, error)
 	// Used by the Manager to find tasks ready to dispatch as K8s Jobs.
 	GetPendingMapTasks(ctx context.Context, arg GetPendingMapTasksParams) ([]MapTask, error)
 	// Used by the Manager to find tasks ready to dispatch as K8s Jobs.
@@ -59,7 +62,9 @@ type Querier interface {
 	// Used by the timeout watchdog.
 	GetStaleRunningReduceTasks(ctx context.Context, dollar_1 sql.NullString) ([]ReduceTask, error)
 	GetWorkflow(ctx context.Context, workflowID uuid.UUID) (Workflow, error)
+	GetWorkflowDependencies(ctx context.Context, workflowID uuid.UUID) ([]GetWorkflowDependenciesRow, error)
 	GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUID) ([]Job, error)
+	GetWorkflowStatus(ctx context.Context, workflowID uuid.UUID) (string, error)
 	IncrementMapTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	IncrementReduceTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	ListStalePlugins(ctx context.Context, dollar_1 sql.NullString) ([]PluginCache, error)
@@ -75,6 +80,7 @@ type Querier interface {
 	MarkReduceTaskFailed(ctx context.Context, taskID uuid.UUID) error
 	// Called when the Manager creates the K8s Job for this task.
 	MarkReduceTaskRunning(ctx context.Context, arg MarkReduceTaskRunningParams) error
+	UpdateJobInputAndStatus(ctx context.Context, arg UpdateJobInputAndStatusParams) error
 	UpdateJobMapperPath(ctx context.Context, arg UpdateJobMapperPathParams) error
 	UpdateJobReducerPath(ctx context.Context, arg UpdateJobReducerPathParams) error
 	UpdateJobStatus(ctx context.Context, arg UpdateJobStatusParams) error

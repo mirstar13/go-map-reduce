@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
 )
@@ -78,6 +79,18 @@ func (q *Queries) CreateWorkflow(ctx context.Context, arg CreateWorkflowParams) 
 	return i, err
 }
 
+const getCompletedWorkflowStagesCount = `-- name: GetCompletedWorkflowStagesCount :one
+SELECT COUNT(*) FROM jobs
+WHERE workflow_id = $1 AND status = 'COMPLETED'
+`
+
+func (q *Queries) GetCompletedWorkflowStagesCount(ctx context.Context, workflowID uuid.NullUUID) (int64, error) {
+	row := q.queryRow(ctx, q.getCompletedWorkflowStagesCountStmt, getCompletedWorkflowStagesCount, workflowID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getDownstreamStages = `-- name: GetDownstreamStages :many
 SELECT stage_name FROM workflow_dependencies 
 WHERE workflow_id = $1 AND depends_on = $2
@@ -111,6 +124,77 @@ func (q *Queries) GetDownstreamStages(ctx context.Context, arg GetDownstreamStag
 	return items, nil
 }
 
+const getJobByWorkflowStage = `-- name: GetJobByWorkflowStage :one
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
+WHERE workflow_id = $1 AND stage_name = $2
+LIMIT 1
+`
+
+type GetJobByWorkflowStageParams struct {
+	WorkflowID uuid.NullUUID  `json:"workflow_id"`
+	StageName  sql.NullString `json:"stage_name"`
+}
+
+func (q *Queries) GetJobByWorkflowStage(ctx context.Context, arg GetJobByWorkflowStageParams) (Job, error) {
+	row := q.queryRow(ctx, q.getJobByWorkflowStageStmt, getJobByWorkflowStage, arg.WorkflowID, arg.StageName)
+	var i Job
+	err := row.Scan(
+		&i.JobID,
+		&i.OwnerUserID,
+		&i.OwnerReplica,
+		&i.Status,
+		&i.MapperPath,
+		&i.ReducerPath,
+		&i.InputPath,
+		&i.OutputPath,
+		&i.NumMappers,
+		&i.NumReducers,
+		&i.InputFormat,
+		&i.SubmittedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.ErrorMessage,
+		&i.WorkflowID,
+		&i.StageName,
+	)
+	return i, err
+}
+
+const getParentsOutputPaths = `-- name: GetParentsOutputPaths :many
+SELECT j.output_path
+FROM workflow_dependencies d
+JOIN jobs j ON j.workflow_id = d.workflow_id AND j.stage_name = d.depends_on
+WHERE d.workflow_id = $1 AND d.stage_name = $2
+`
+
+type GetParentsOutputPathsParams struct {
+	WorkflowID uuid.UUID `json:"workflow_id"`
+	StageName  string    `json:"stage_name"`
+}
+
+func (q *Queries) GetParentsOutputPaths(ctx context.Context, arg GetParentsOutputPathsParams) ([]string, error) {
+	rows, err := q.query(ctx, q.getParentsOutputPathsStmt, getParentsOutputPaths, arg.WorkflowID, arg.StageName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var output_path string
+		if err := rows.Scan(&output_path); err != nil {
+			return nil, err
+		}
+		items = append(items, output_path)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getWorkflow = `-- name: GetWorkflow :one
 SELECT workflow_id, name, status, owner_user_id, created_at FROM workflows WHERE workflow_id = $1
 `
@@ -126,6 +210,39 @@ func (q *Queries) GetWorkflow(ctx context.Context, workflowID uuid.UUID) (Workfl
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getWorkflowDependencies = `-- name: GetWorkflowDependencies :many
+SELECT stage_name, depends_on FROM workflow_dependencies 
+WHERE workflow_id = $1
+`
+
+type GetWorkflowDependenciesRow struct {
+	StageName string `json:"stage_name"`
+	DependsOn string `json:"depends_on"`
+}
+
+func (q *Queries) GetWorkflowDependencies(ctx context.Context, workflowID uuid.UUID) ([]GetWorkflowDependenciesRow, error) {
+	rows, err := q.query(ctx, q.getWorkflowDependenciesStmt, getWorkflowDependencies, workflowID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetWorkflowDependenciesRow{}
+	for rows.Next() {
+		var i GetWorkflowDependenciesRow
+		if err := rows.Scan(&i.StageName, &i.DependsOn); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getWorkflowStages = `-- name: GetWorkflowStages :many
@@ -173,6 +290,17 @@ func (q *Queries) GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUI
 		return nil, err
 	}
 	return items, nil
+}
+
+const getWorkflowStatus = `-- name: GetWorkflowStatus :one
+SELECT status FROM workflows WHERE workflow_id = $1
+`
+
+func (q *Queries) GetWorkflowStatus(ctx context.Context, workflowID uuid.UUID) (string, error) {
+	row := q.queryRow(ctx, q.getWorkflowStatusStmt, getWorkflowStatus, workflowID)
+	var status string
+	err := row.Scan(&status)
+	return status, err
 }
 
 const updateWorkflowStatus = `-- name: UpdateWorkflowStatus :one
