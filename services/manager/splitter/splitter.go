@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -39,69 +40,55 @@ func New(cfg *config.Config) (*Splitter, error) {
 
 // GetSize returns the total size of the object(s) in MinIO matching the prefix.
 func (s *Splitter) GetSize(ctx context.Context, inputPath string) (int64, error) {
-	// Try to stat as a single object first
-	stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, inputPath, minio.StatObjectOptions{})
-	if err == nil {
-		return stat.Size, nil
-	}
-
-	// If stat fails, try to list as a prefix
 	var totalSize int64
-	objectCh := s.client.ListObjects(ctx, s.cfg.MinioBucketInput, minio.ListObjectsOptions{
-		Prefix:    inputPath,
-		Recursive: true,
-	})
+	paths := strings.Split(inputPath, ",")
 
-	found := false
-	for obj := range objectCh {
-		if obj.Err != nil {
-			return 0, fmt.Errorf("splitter: list objects for %s: %w", inputPath, obj.Err)
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
 		}
-		totalSize += obj.Size
-		found = true
-	}
 
-	if !found {
-		return 0, fmt.Errorf("splitter: input path %s not found", inputPath)
+		// Try to stat as a single object first
+		stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, p, minio.StatObjectOptions{})
+		if err == nil {
+			totalSize += stat.Size
+			continue
+		}
+
+		// If stat fails, try to list as a prefix
+		objectCh := s.client.ListObjects(ctx, s.cfg.MinioBucketInput, minio.ListObjectsOptions{
+			Prefix:    p,
+			Recursive: true,
+		})
+
+		found := false
+		for obj := range objectCh {
+			if obj.Err != nil {
+				return 0, fmt.Errorf("splitter: list objects for %s: %w", p, obj.Err)
+			}
+			totalSize += obj.Size
+			found = true
+		}
+
+		if !found {
+			return 0, fmt.Errorf("splitter: input path %s not found", p)
+		}
 	}
 
 	return totalSize, nil
 }
 
-// Compute divides the input at `inputPath` (file or prefix) into `numSplits` tasks.
+// Compute divides the input at `inputPath` (file or prefix, can be comma-separated) into `numSplits` tasks.
 func (s *Splitter) Compute(ctx context.Context, inputPath string, numSplits int) ([]Split, error) {
 	if numSplits < 1 {
 		numSplits = 1
 	}
 
 	// 1. Identify all files to process
-	type fileInfo struct {
-		name string
-		size int64
-	}
-	var files []fileInfo
-	var totalSize int64
-
-	stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, inputPath, minio.StatObjectOptions{})
-	if err == nil {
-		// Single file
-		files = append(files, fileInfo{name: inputPath, size: stat.Size})
-		totalSize = stat.Size
-	} else {
-		// Prefix/Directory
-		objectCh := s.client.ListObjects(ctx, s.cfg.MinioBucketInput, minio.ListObjectsOptions{
-			Prefix:    inputPath,
-			Recursive: true,
-		})
-		for obj := range objectCh {
-			if obj.Err != nil {
-				return nil, fmt.Errorf("splitter: list objects: %w", obj.Err)
-			}
-			if obj.Size > 0 {
-				files = append(files, fileInfo{name: obj.Key, size: obj.Size})
-				totalSize += obj.Size
-			}
-		}
+	files, totalSize, err := s.findFiles(ctx, inputPath)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(files) == 0 {
@@ -115,29 +102,14 @@ func (s *Splitter) Compute(ctx context.Context, inputPath string, numSplits int)
 	}
 
 	var splits []Split
-	var currentSplitSize int64
-	
 	splitIndex := 0
 
 	for _, f := range files {
-		// If file is very large (relative to target), split it up
-		if f.size > targetSplitSize*2 {
-			// Flush current small-file accumulation split if it exists
-			if currentSplitSize > 0 {
-				// We don't have a good way to "group" multiple files in the DB schema yet
-				// because MapTask has a single InputFile field.
-				// For now, if we have accumulation, we finish it.
-				// To keep it simple and compatible with the existing DB schema:
-				// WE DO NOT GROUP MULTIPLE FILES IN ONE SPLIT YET.
-				// Each small file gets its own split, and large files get partitioned.
-			}
-		}
-
-		// Simple implementation: 
-		// - Every file >= targetSplitSize is partitioned.
-		// - Every file < targetSplitSize gets its own single split.
+		// Simple implementation:
+		// - Every file <= targetSplitSize gets its own single split.
+		// - Every file > targetSplitSize is partitioned.
 		// This ensures we never miss a file and fits the current DB schema (1 Task = 1 File).
-		
+
 		if f.size <= targetSplitSize || numSplits == 1 {
 			splits = append(splits, Split{
 				Index:  splitIndex,
@@ -154,7 +126,7 @@ func (s *Splitter) Compute(ctx context.Context, inputPath string, numSplits int)
 		if numFileSplits < 1 {
 			numFileSplits = 1
 		}
-		
+
 		var offset int64
 		for i := 0; i < numFileSplits && offset < f.size; i++ {
 			tentativeEnd := offset + targetSplitSize
@@ -185,6 +157,47 @@ func (s *Splitter) Compute(ctx context.Context, inputPath string, numSplits int)
 	}
 
 	return splits, nil
+}
+
+type fileInfo struct {
+	name string
+	size int64
+}
+
+func (s *Splitter) findFiles(ctx context.Context, inputPath string) ([]fileInfo, int64, error) {
+	var files []fileInfo
+	var totalSize int64
+	paths := strings.Split(inputPath, ",")
+
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+
+		stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, p, minio.StatObjectOptions{})
+		if err == nil {
+			// Single file
+			files = append(files, fileInfo{name: p, size: stat.Size})
+			totalSize += stat.Size
+		} else {
+			// Prefix/Directory
+			objectCh := s.client.ListObjects(ctx, s.cfg.MinioBucketInput, minio.ListObjectsOptions{
+				Prefix:    p,
+				Recursive: true,
+			})
+			for obj := range objectCh {
+				if obj.Err != nil {
+					return nil, 0, fmt.Errorf("splitter: list objects for %s: %w", p, obj.Err)
+				}
+				if obj.Size > 0 {
+					files = append(files, fileInfo{name: obj.Key, size: obj.Size})
+					totalSize += obj.Size
+				}
+			}
+		}
+	}
+	return files, totalSize, nil
 }
 
 // findNextNewline reads a small lookahead window from `startOffset` and returns
