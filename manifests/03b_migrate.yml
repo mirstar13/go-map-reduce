@@ -59,7 +59,7 @@ spec:
 
       containers:
         - name: migrate
-          image: starpal/mapreduce-migrate:latest
+          image: starpal/mapreduce-migrate:beta
           imagePullPolicy: Always
           securityContext:
             allowPrivilegeEscalation: false

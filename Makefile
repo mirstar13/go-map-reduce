@@ -1,8 +1,9 @@
 BUILDX_BUILDER := mapreduce-builder
 DOCKER_REGISTRY := starpal
 PLATFORMS := linux/amd64
+TAG ?= testing
 
-.PHONY: minikube-star test-coverage docker-build docker-build-push buildx-setup buildx-cleanup
+.PHONY: minikube-start test-coverage docker-build docker-build-push buildx-setup buildx-cleanup
 
 minikube-start:
 	minikube start --cpus=max --memory=max --disk-size=20g --driver=docker
@@ -23,17 +24,29 @@ buildx-cleanup:
 	@docker buildx rm $(BUILDX_BUILDER) 2>/dev/null || true
 
 docker-build: buildx-setup
-	@docker buildx build --load -f ./cmd/cli/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-cli .
-	@docker buildx build --load -f ./cmd/migrate/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-migrate .
-	@docker buildx build --load -f ./services/manager/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-manager-service .
-	@docker buildx build --load -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service .
-	@docker buildx build --load -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker .
-	@docker buildx build --load -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder .
+	@if [ -z "$(shell git status --porcelain cmd/cli pkg/)" ]; then echo "Skipping cli"; else \
+		docker buildx build --load -f ./cmd/cli/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-cli:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain cmd/migrate pkg/)" ]; then echo "Skipping migrate"; else \
+		docker buildx build --load -f ./cmd/migrate/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-migrate:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/manager pkg/)" ]; then echo "Skipping manager"; else \
+		docker buildx build --load -f ./services/manager/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-manager-service:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/ui pkg/)" ]; then echo "Skipping ui"; else \
+		docker buildx build --load -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/worker pkg/)" ]; then echo "Skipping worker"; else \
+		docker buildx build --load -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/builder pkg/)" ]; then echo "Skipping builder"; else \
+		docker buildx build --load -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder:$(TAG) . ; fi
 
 docker-build-push: buildx-setup
-	@docker buildx build --platform $(PLATFORMS) --push -f ./cmd/cli/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-cli .
-	@docker buildx build --platform $(PLATFORMS) --push -f ./cmd/migrate/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-migrate .
-	@docker buildx build --platform $(PLATFORMS) --push -f ./services/manager/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-manager-service .
-	@docker buildx build --platform $(PLATFORMS) --push -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service .
-	@docker buildx build --platform $(PLATFORMS) --push -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker .
-	@docker buildx build --platform $(PLATFORMS) --push -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder .
+	@if [ -z "$(shell git status --porcelain cmd/cli pkg/)" ]; then echo "Skipping cli"; else \
+		docker buildx build --platform $(PLATFORMS) --push -f ./cmd/cli/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-cli:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain cmd/migrate pkg/)" ]; then echo "Skipping migrate"; else \
+		docker buildx build --platform $(PLATFORMS) --push -f ./cmd/migrate/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-migrate:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/manager pkg/)" ]; then echo "Skipping manager"; else \
+		docker buildx build --platform $(PLATFORMS) --push -f ./services/manager/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-manager-service:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/ui pkg/)" ]; then echo "Skipping ui"; else \
+		docker buildx build --platform $(PLATFORMS) --push -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/worker pkg/)" ]; then echo "Skipping worker"; else \
+		docker buildx build --platform $(PLATFORMS) --push -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker:$(TAG) . ; fi
+	@if [ -z "$(shell git status --porcelain services/builder pkg/)" ]; then echo "Skipping builder"; else \
+		docker buildx build --platform $(PLATFORMS) --push -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder:$(TAG) . ; fi
