@@ -11,18 +11,20 @@ VALUES ($1, $2, $3);
 SELECT * FROM workflows WHERE workflow_id = $1;
 
 -- name: GetWorkflowStages :many
-SELECT * FROM jobs WHERE workflow_id = $1;
+SELECT * FROM jobs 
+WHERE workflow_id = $1
+ORDER BY submitted_at ASC;
 
 -- name: GetDownstreamStages :many
 SELECT stage_name FROM workflow_dependencies 
 WHERE workflow_id = $1 AND depends_on = $2;
 
--- name: CheckStageDependencies :many
--- Returns all parents of a stage and their status
-SELECT j.status 
+-- name: CheckStageDependencies :one
+-- Returns the number of parents that are not yet COMPLETED
+SELECT COUNT(*)
 FROM workflow_dependencies d
 JOIN jobs j ON j.workflow_id = d.workflow_id AND j.stage_name = d.depends_on
-WHERE d.workflow_id = $1 AND d.stage_name = $2;
+WHERE d.workflow_id = $1 AND d.stage_name = $2 AND j.status != 'COMPLETED';
 
 -- name: UpdateWorkflowStatus :one
 UPDATE workflows
