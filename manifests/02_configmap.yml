@@ -28,7 +28,7 @@ data:
   MANAGER_REPLICAS:       "2"
   WORKER_NAMESPACE:       "mapreduce"
   WORKER_IMAGE:           "starpal/mapreduce-worker:beta"
-  BUILDER_IMAGE:          "starpal/mapreduce-builder:beta"
+  BUILDER_IMAGE:          "starpal/mapreduce-builder:latest"
   WORKER_CPU_REQUEST:     "1000m"
   WORKER_CPU_LIMIT:       "2000m"
   WORKER_MEMORY_REQUEST:  "1Gi"

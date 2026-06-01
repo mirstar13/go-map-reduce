@@ -39,6 +39,7 @@ func NewWorkflowHandler(
 
 // SubmitWorkflow handles POST /workflows.
 func (h *WorkflowHandler) SubmitWorkflow(c fiber.Ctx) error {
+	fmt.Println("MANAGER: SubmitWorkflow called")
 	id := auth.GetIdentity(c)
 	if id == nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthenticated"})

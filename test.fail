@@ -1,0 +1,50 @@
+PS C:\MyFiles\Code\Go\go-map-reduce> go test -v ./test -run ^TestE2E_WorkflowPipeline$
+=== RUN   TestE2E_WorkflowPipeline
+    workflow_e2e_test.go:18: Authenticating as alice against https://ui.mapreduce.nip.io
+    workflow_e2e_test.go:34: Compiling plugins...
+    workflow_e2e_test.go:160: Uploading files...
+    workflow_e2e_test.go:182: Submitting workflow...
+    workflow_e2e_test.go:211: Workflow submitted: ea578e38-e862-4025-9a0a-23851b7c228c
+    workflow_e2e_test.go:214: Waiting for workflow to complete...
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: SPLITTING
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: MAP_PHASE
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: MAP_PHASE
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: REDUCE_PHASE
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: REDUCE_PHASE
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: COMPLETED
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: COMPLETED
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: COMPLETED
+    workflow_e2e_test.go:240:   Stage stage2: PENDING
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: COMPLETED
+    workflow_e2e_test.go:240:   Stage stage2: FAILED
+    workflow_e2e_test.go:254: Error: split: compute splits: splitter: no input files found at output/workflows/ea578e38-e862-4025-9a0a-23851b7c228c/stage1
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: COMPLETED
+    workflow_e2e_test.go:240:   Stage stage2: FAILED
+    workflow_e2e_test.go:254: Error: split: compute splits: splitter: no input files found at output/workflows/ea578e38-e862-4025-9a0a-23851b7c228c/stage1
+    workflow_e2e_test.go:224: Workflow status: RUNNING
+    workflow_e2e_test.go:240:   Stage stage1: COMPLETED
+    workflow_e2e_test.go:240:   Stage stage2: FAILED
+    workflow_e2e_test.go:254: Error: split: compute splits: splitter: no input files found at output/workflows/ea578e38-e862-4025-9a0a-23851b7c228c/stage1
+    workflow_e2e_test.go:224: Workflow status: FAILED
+    workflow_e2e_test.go:231: workflow failed
+--- FAIL: TestE2E_WorkflowPipeline (32.06s)
+FAIL
+FAIL    github.com/mirstar13/go-map-reduce/test 32.941s
+FAIL

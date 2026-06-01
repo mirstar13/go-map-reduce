@@ -181,7 +181,7 @@ spec:
         # Wait until the MinIO API is healthy before running mc.
         - name: wait-for-minio
           image: busybox:1.36
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

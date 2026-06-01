@@ -73,11 +73,13 @@ INSERT INTO jobs (
     num_reducers,
     input_format,
     workflow_id,
-    stage_name
+    stage_name,
+    input_bucket,
+    output_bucket
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
-RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name
+RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket
 `
 
 type CreateJobParams struct {
@@ -92,6 +94,8 @@ type CreateJobParams struct {
 	InputFormat  string         `json:"input_format"`
 	WorkflowID   uuid.NullUUID  `json:"workflow_id"`
 	StageName    sql.NullString `json:"stage_name"`
+	InputBucket  string         `json:"input_bucket"`
+	OutputBucket string         `json:"output_bucket"`
 }
 
 func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, error) {
@@ -107,6 +111,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		arg.InputFormat,
 		arg.WorkflowID,
 		arg.StageName,
+		arg.InputBucket,
+		arg.OutputBucket,
 	)
 	var i Job
 	err := row.Scan(
@@ -127,6 +133,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.ErrorMessage,
 		&i.WorkflowID,
 		&i.StageName,
+		&i.InputBucket,
+		&i.OutputBucket,
 	)
 	return i, err
 }
@@ -161,7 +169,7 @@ func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) error {
 }
 
 const getActiveJobsByReplica = `-- name: GetActiveJobsByReplica :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
 WHERE owner_replica = $1
   AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
 `
@@ -194,6 +202,8 @@ func (q *Queries) GetActiveJobsByReplica(ctx context.Context, ownerReplica strin
 			&i.ErrorMessage,
 			&i.WorkflowID,
 			&i.StageName,
+			&i.InputBucket,
+			&i.OutputBucket,
 		); err != nil {
 			return nil, err
 		}
@@ -209,7 +219,7 @@ func (q *Queries) GetActiveJobsByReplica(ctx context.Context, ownerReplica strin
 }
 
 const getAllJobs = `-- name: GetAllJobs :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
 ORDER BY submitted_at DESC
 `
 
@@ -240,6 +250,8 @@ func (q *Queries) GetAllJobs(ctx context.Context) ([]Job, error) {
 			&i.ErrorMessage,
 			&i.WorkflowID,
 			&i.StageName,
+			&i.InputBucket,
+			&i.OutputBucket,
 		); err != nil {
 			return nil, err
 		}
@@ -255,7 +267,7 @@ func (q *Queries) GetAllJobs(ctx context.Context) ([]Job, error) {
 }
 
 const getJob = `-- name: GetJob :one
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
 WHERE job_id = $1
 LIMIT 1
 `
@@ -281,12 +293,14 @@ func (q *Queries) GetJob(ctx context.Context, jobID uuid.UUID) (Job, error) {
 		&i.ErrorMessage,
 		&i.WorkflowID,
 		&i.StageName,
+		&i.InputBucket,
+		&i.OutputBucket,
 	)
 	return i, err
 }
 
 const getJobsByUser = `-- name: GetJobsByUser :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
 WHERE owner_user_id = $1
 ORDER BY submitted_at DESC
 `
@@ -318,6 +332,8 @@ func (q *Queries) GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job,
 			&i.ErrorMessage,
 			&i.WorkflowID,
 			&i.StageName,
+			&i.InputBucket,
+			&i.OutputBucket,
 		); err != nil {
 			return nil, err
 		}

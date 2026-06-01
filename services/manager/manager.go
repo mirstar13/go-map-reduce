@@ -30,6 +30,7 @@ import (
 )
 
 func main() {
+	fmt.Println("MANAGER VERSION: DAG-v1")
 	log, err := zap.NewProduction()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build logger: %v\n", err)
@@ -156,6 +157,10 @@ func main() {
 	api.Post("/jobs/:id/cancel", jobHandler.CancelJob)
 	api.Get("/jobs/:id/output", jobHandler.GetJobOutput)
 	api.Get("/jobs/:id/progress", jobHandler.GetJobProgress)
+
+	app.Get("/debug/routes", func(c fiber.Ctx) error {
+		return c.JSON(app.Stack())
+	})
 
 	// Admin: all jobs regardless of owner
 	api.Get("/admin/jobs", jobHandler.AdminListJobs)

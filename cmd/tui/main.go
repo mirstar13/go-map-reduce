@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mirstar13/go-map-reduce/cmd/cli/client"
+	"github.com/mirstar13/go-map-reduce/cmd/cli/config"
 	"github.com/mirstar13/go-map-reduce/db"
 )
 
@@ -113,7 +114,7 @@ func (m model) View() string {
 	healthStyle := panelStyle
 	if m.err != nil {
 		healthText = fmt.Sprintf("Health: ERROR (%v)", m.err)
-		healthStyle = panelStyle.Copy().BorderForeground(lipgloss.Color("#f7768e"))
+		healthStyle = panelStyle.BorderForeground(lipgloss.Color("#f7768e"))
 	}
 	if m.focused == healthPanel {
 		healthStyle = focusedPanelStyle
@@ -128,11 +129,12 @@ func (m model) View() string {
 		if idx >= 0 && idx < len(m.jobs) {
 			job := m.jobs[idx]
 			statusText = fmt.Sprintf("Job %s: %s", job.JobID.String()[:8], job.Status)
-			if job.Status == "completed" {
+			switch job.Status {
+			case "completed":
 				progVal = 1.0
-			} else if job.Status == "running" {
+			case "running":
 				progVal = 0.45 // Mock progress
-			} else if job.Status == "failed" {
+			case "failed":
 				progVal = 0.0
 			}
 		}
@@ -165,13 +167,14 @@ func (m model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, topRow, bottomRow)
 }
 
+func newClient(cfg *config.Config) *client.Client {
+	return client.New(cfg.ServerURL, cfg.Token)
+}
+
 func main() {
-	url := os.Getenv("UI_URL")
-	if url == "" {
-		url = "http://localhost:8081"
-	}
 	// Initialize a client
-	c := client.New(url+"/api/v1", "")
+	cfg, _ := config.Load()
+	c := newClient(cfg)
 
 	p := tea.NewProgram(initialModel(c), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

@@ -99,6 +99,24 @@ func (m *ManagerClient) DeleteJob(
 	return m.do(ctx, http.MethodDelete, url, userID, userEmail, userRoles, nil)
 }
 
+// SubmitWorkflow forwards a workflow-submission request to the hashed Manager replica.
+func (m *ManagerClient) SubmitWorkflow(
+	ctx context.Context,
+	userID, userEmail, userRoles string,
+	body []byte,
+) (json.RawMessage, int, error) {
+	url := m.replicaURL(userID) + "/workflows"
+	return m.do(ctx, http.MethodPost, url, userID, userEmail, userRoles, body)
+}
+
+// GetWorkflow fetches a single workflow from the Manager's ClusterIP service.
+func (m *ManagerClient) GetWorkflow(
+	ctx context.Context,
+	workflowID, userID, userEmail, userRoles string,
+) (json.RawMessage, int, error) {
+	url := m.baseURL() + "/workflows/" + workflowID
+	return m.do(ctx, http.MethodGet, url, userID, userEmail, userRoles, nil)
+}
 
 // AdminListJobs returns all jobs regardless of owner (admin only).
 func (m *ManagerClient) AdminListJobs(

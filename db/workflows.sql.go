@@ -125,7 +125,7 @@ func (q *Queries) GetDownstreamStages(ctx context.Context, arg GetDownstreamStag
 }
 
 const getJobByWorkflowStage = `-- name: GetJobByWorkflowStage :one
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
 WHERE workflow_id = $1 AND stage_name = $2
 LIMIT 1
 `
@@ -156,6 +156,8 @@ func (q *Queries) GetJobByWorkflowStage(ctx context.Context, arg GetJobByWorkflo
 		&i.ErrorMessage,
 		&i.WorkflowID,
 		&i.StageName,
+		&i.InputBucket,
+		&i.OutputBucket,
 	)
 	return i, err
 }
@@ -246,7 +248,7 @@ func (q *Queries) GetWorkflowDependencies(ctx context.Context, workflowID uuid.U
 }
 
 const getWorkflowStages = `-- name: GetWorkflowStages :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name FROM jobs 
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs 
 WHERE workflow_id = $1
 ORDER BY submitted_at ASC
 `
@@ -278,6 +280,8 @@ func (q *Queries) GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUI
 			&i.ErrorMessage,
 			&i.WorkflowID,
 			&i.StageName,
+			&i.InputBucket,
+			&i.OutputBucket,
 		); err != nil {
 			return nil, err
 		}

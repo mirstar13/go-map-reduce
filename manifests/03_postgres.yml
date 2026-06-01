@@ -308,7 +308,7 @@ spec:
         # The main container then starts postgres and finds these files.
         - name: pg-basebackup
           image: postgres:16-alpine
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
@@ -374,7 +374,7 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

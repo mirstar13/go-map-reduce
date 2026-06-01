@@ -43,8 +43,8 @@ spec:
 
       containers:
         - name: ui-service
-          image: starpal/mapreduce-ui-service:beta
-          imagePullPolicy: Always
+          image: starpal/mapreduce-ui-service:beta-2
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

@@ -239,7 +239,7 @@ func (s *Supervisor) doSplit(ctx context.Context) error {
 		return fmt.Errorf("split: mark SPLITTING: %w", err)
 	}
 
-	splits, err := s.splitter.Compute(ctx, s.job.InputPath, int(s.job.NumMappers))
+	splits, err := s.splitter.Compute(ctx, s.job.InputBucket, s.job.InputPath, int(s.job.NumMappers))
 	if err != nil {
 		return s.failJob(ctx, fmt.Sprintf("split: compute splits: %v", err))
 	}
@@ -306,6 +306,7 @@ func (s *Supervisor) checkMapPhase(ctx context.Context) error {
 					InputLength: task.InputLength,
 					MapperPath:  s.job.MapperPath,
 					NumReducers: int(s.job.NumReducers),
+					InputBucket: s.job.InputBucket,
 				})
 			}
 		}
@@ -447,6 +448,7 @@ func (s *Supervisor) checkReducePhase(ctx context.Context) error {
 					TaskIndex:      int(task.TaskIndex),
 					ReducerPath:    s.job.ReducerPath,
 					InputLocations: json.RawMessage(locsJSON),
+					InputBucket: s.job.InputBucket,
 				})
 			}
 		}
@@ -514,7 +516,8 @@ func (s *Supervisor) dispatchPendingReduceTasks(ctx context.Context) error {
 			TaskIndex:      int(task.TaskIndex),
 			ReducerPath:    s.job.ReducerPath,
 			InputLocations: json.RawMessage(locsJSON),
-		})
+			OutputBucket:   s.job.OutputBucket,
+			})
 		if err != nil {
 			s.log.Error("dispatch reduce task", zap.String("task_id", task.TaskID.String()), zap.Error(err))
 			continue

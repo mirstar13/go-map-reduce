@@ -11,8 +11,8 @@ import (
 // Splitter is satisfied by *splitter.Splitter.
 // Extracted as an interface so the supervisor can be tested without MinIO.
 type Splitter interface {
-	Compute(ctx context.Context, objectKey string, numSplits int) ([]splitter.Split, error)
-	GetSize(ctx context.Context, objectKey string) (int64, error)
+	Compute(ctx context.Context, bucket string, objectKey string, numSplits int) ([]splitter.Split, error)
+	GetSize(ctx context.Context, bucket string, objectKey string) (int64, error)
 }
 
 // Dispatcher is satisfied by *dispatcher.Dispatcher.

@@ -84,8 +84,8 @@ spec:
 
       containers:
         - name: manager
-          image: starpal/mapreduce-manager-service:beta
-          imagePullPolicy: Always
+          image: starpal/mapreduce-manager-service:beta-2
+          imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

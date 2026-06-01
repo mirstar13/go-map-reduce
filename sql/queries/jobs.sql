@@ -10,9 +10,11 @@ INSERT INTO jobs (
     num_reducers,
     input_format,
     workflow_id,
-    stage_name
+    stage_name,
+    input_bucket,
+    output_bucket
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
 )
 RETURNING *;
 

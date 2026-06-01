@@ -157,6 +157,8 @@ func (h *JobHandler) SubmitJob(c fiber.Ctx) error {
 		NumMappers:   req.NumMappers,
 		NumReducers:  req.NumReducers,
 		InputFormat:  req.InputFormat,
+		InputBucket:  h.cfg.MinioBucketInput,
+		OutputBucket: h.cfg.MinioBucketOutput,
 	})
 	if err != nil {
 		h.log.Error("create job", zap.Error(err))

@@ -39,7 +39,7 @@ func New(cfg *config.Config) (*Splitter, error) {
 }
 
 // GetSize returns the total size of the object(s) in MinIO matching the prefix.
-func (s *Splitter) GetSize(ctx context.Context, inputPath string) (int64, error) {
+func (s *Splitter) GetSize(ctx context.Context, bucket string, inputPath string) (int64, error) {
 	var totalSize int64
 	paths := strings.Split(inputPath, ",")
 
@@ -50,14 +50,14 @@ func (s *Splitter) GetSize(ctx context.Context, inputPath string) (int64, error)
 		}
 
 		// Try to stat as a single object first
-		stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, p, minio.StatObjectOptions{})
+		stat, err := s.client.StatObject(ctx, bucket, p, minio.StatObjectOptions{})
 		if err == nil {
 			totalSize += stat.Size
 			continue
 		}
 
 		// If stat fails, try to list as a prefix
-		objectCh := s.client.ListObjects(ctx, s.cfg.MinioBucketInput, minio.ListObjectsOptions{
+		objectCh := s.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
 			Prefix:    p,
 			Recursive: true,
 		})
@@ -80,13 +80,13 @@ func (s *Splitter) GetSize(ctx context.Context, inputPath string) (int64, error)
 }
 
 // Compute divides the input at `inputPath` (file or prefix, can be comma-separated) into `numSplits` tasks.
-func (s *Splitter) Compute(ctx context.Context, inputPath string, numSplits int) ([]Split, error) {
+func (s *Splitter) Compute(ctx context.Context, bucket string, inputPath string, numSplits int) ([]Split, error) {
 	if numSplits < 1 {
 		numSplits = 1
 	}
 
 	// 1. Identify all files to process
-	files, totalSize, err := s.findFiles(ctx, inputPath)
+	files, totalSize, err := s.findFiles(ctx, bucket, inputPath)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +141,7 @@ func (s *Splitter) Compute(ctx context.Context, inputPath string, numSplits int)
 				break
 			}
 
-			actualEnd, err := s.findNextNewline(ctx, f.name, tentativeEnd)
+			actualEnd, err := s.findNextNewline(ctx, bucket, f.name, tentativeEnd)
 			if err != nil {
 				return nil, err
 			}
@@ -164,7 +164,7 @@ type fileInfo struct {
 	size int64
 }
 
-func (s *Splitter) findFiles(ctx context.Context, inputPath string) ([]fileInfo, int64, error) {
+func (s *Splitter) findFiles(ctx context.Context, bucket string, inputPath string) ([]fileInfo, int64, error) {
 	var files []fileInfo
 	var totalSize int64
 	paths := strings.Split(inputPath, ",")
@@ -175,14 +175,14 @@ func (s *Splitter) findFiles(ctx context.Context, inputPath string) ([]fileInfo,
 			continue
 		}
 
-		stat, err := s.client.StatObject(ctx, s.cfg.MinioBucketInput, p, minio.StatObjectOptions{})
+		stat, err := s.client.StatObject(ctx, bucket, p, minio.StatObjectOptions{})
 		if err == nil {
 			// Single file
 			files = append(files, fileInfo{name: p, size: stat.Size})
 			totalSize += stat.Size
 		} else {
 			// Prefix/Directory
-			objectCh := s.client.ListObjects(ctx, s.cfg.MinioBucketInput, minio.ListObjectsOptions{
+			objectCh := s.client.ListObjects(ctx, bucket, minio.ListObjectsOptions{
 				Prefix:    p,
 				Recursive: true,
 			})
@@ -203,13 +203,13 @@ func (s *Splitter) findFiles(ctx context.Context, inputPath string) ([]fileInfo,
 // findNextNewline reads a small lookahead window from `startOffset` and returns
 // the byte position immediately after the first newline character found.
 // If no newline is found in the lookahead, it recurses one window forward.
-func (s *Splitter) findNextNewline(ctx context.Context, objectKey string, startOffset int64) (int64, error) {
+func (s *Splitter) findNextNewline(ctx context.Context, bucket string, objectKey string, startOffset int64) (int64, error) {
 	const lookahead = 4096
 
 	opts := minio.GetObjectOptions{}
 	opts.SetRange(startOffset, startOffset+lookahead-1)
 
-	obj, err := s.client.GetObject(ctx, s.cfg.MinioBucketInput, objectKey, opts)
+	obj, err := s.client.GetObject(ctx, bucket, objectKey, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -231,5 +231,5 @@ func (s *Splitter) findNextNewline(ctx context.Context, objectKey string, startO
 		// We've reached the end of the file without finding a newline.
 		return startOffset, nil
 	}
-	return s.findNextNewline(ctx, objectKey, startOffset+int64(n))
+	return s.findNextNewline(ctx, bucket, objectKey, startOffset+int64(n))
 }

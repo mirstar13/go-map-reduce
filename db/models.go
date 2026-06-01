@@ -30,6 +30,8 @@ type Job struct {
 	ErrorMessage sql.NullString `json:"error_message"`
 	WorkflowID   uuid.NullUUID  `json:"workflow_id"`
 	StageName    sql.NullString `json:"stage_name"`
+	InputBucket  string         `json:"input_bucket"`
+	OutputBucket string         `json:"output_bucket"`
 }
 
 type MapTask struct {

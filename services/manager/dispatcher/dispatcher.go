@@ -48,6 +48,7 @@ type MapTaskSpec struct {
 	InputLength int64
 	MapperPath  string
 	NumReducers int
+	InputBucket string
 }
 
 // BuildTaskSpec carries everything the Dispatcher needs to launch a builder.
@@ -60,13 +61,14 @@ type BuildTaskSpec struct {
 
 // ReduceTaskSpec carries everything the Dispatcher needs to launch a reduce worker.
 type ReduceTaskSpec struct {
-	TaskID      string
-	JobID       string
-	TaskIndex   int
-	ReducerPath string
+	TaskID         string
+	JobID          string
+	TaskIndex      int
+	ReducerPath    string
 	// InputLocations is a JSON array of {reducer_index, path} objects
 	// collected from all completed map tasks for this reducer index.
 	InputLocations json.RawMessage
+	OutputBucket   string
 }
 
 // DispatchMap creates a Kubernetes Job for a map worker.
@@ -93,7 +95,7 @@ func (d *Dispatcher) DispatchMap(ctx context.Context, spec MapTaskSpec) (string,
 		{Name: "INPUT_PATH", Value: string(inputSpec)},
 		{Name: "MAPPER_PATH", Value: spec.MapperPath},
 		{Name: "NUM_REDUCERS", Value: fmt.Sprintf("%d", spec.NumReducers)},
-		{Name: "MINIO_BUCKET_INPUT", Value: d.cfg.MinioBucketInput},
+		{Name: "MINIO_BUCKET_INPUT", Value: spec.InputBucket},
 		{Name: "MINIO_BUCKET_CODE", Value: d.cfg.MinioBucketCode},
 		{Name: "MINIO_BUCKET_JOBS", Value: d.cfg.MinioBucketJobs},
 		d.minioEndpointVar(),

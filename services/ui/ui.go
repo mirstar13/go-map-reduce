@@ -46,6 +46,8 @@ func main() {
 	jobHandler := handler.NewJobHandler(managerClient, log)
 	fileHandler := handler.NewFileHandler(minioClient, log)
 	adminHandler := handler.NewAdminHandler(managerClient, keycloakClient, log)
+	workflowHandler := handler.NewWorkflowHandler(managerClient, log)
+	log.Info("registering workflow routes")
 
 	app := fiber.New(fiber.Config{
 		// Disable Fiber's default error page to always return JSON.
@@ -100,6 +102,11 @@ func main() {
 	jobs.Post("/:id/cancel", jobHandler.CancelJob)
 	jobs.Get("/:id/output", jobHandler.GetJobOutput)
 	jobs.Get("/:id/progress", jobHandler.GetJobProgress)
+
+	// Workflows
+	workflows := api.Group("/workflows", rbac.RequireAnyRole("user", "admin"))
+	workflows.Post("", workflowHandler.SubmitWorkflow)
+	workflows.Get("/:id", workflowHandler.GetWorkflow)
 
 	// File downloads (accessible by any authenticated user).
 	files := api.Group("/files", rbac.RequireAnyRole("user", "admin"))
