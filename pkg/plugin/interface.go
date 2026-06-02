@@ -1,5 +1,7 @@
 package plugin
 
+import "context"
+
 // Record represents a key-value pair in MapReduce.
 type Record struct {
 	Key   string
@@ -10,6 +12,11 @@ type Record struct {
 type MapInput struct {
 	Key   string
 	Value string
+}
+
+// ContextAware allows components to receive a context during execution.
+type ContextAware interface {
+	InjectContext(ctx context.Context) error
 }
 
 // Mapper is the interface that mapper plugins must implement.

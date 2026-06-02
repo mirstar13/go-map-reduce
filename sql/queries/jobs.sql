@@ -12,9 +12,10 @@ INSERT INTO jobs (
     workflow_id,
     stage_name,
     input_bucket,
-    output_bucket
+    output_bucket,
+    condition
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
 RETURNING *;
 
@@ -108,4 +109,10 @@ WHERE job_id = $1;
 
 -- name: DeleteJob :exec
 DELETE FROM jobs
+WHERE job_id = $1;
+
+
+-- name: IncrementJobOutputRecords :exec
+UPDATE jobs
+SET output_records = output_records + $2
 WHERE job_id = $1;

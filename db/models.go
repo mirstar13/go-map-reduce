@@ -13,25 +13,27 @@ import (
 )
 
 type Job struct {
-	JobID        uuid.UUID      `json:"job_id"`
-	OwnerUserID  string         `json:"owner_user_id"`
-	OwnerReplica string         `json:"owner_replica"`
-	Status       string         `json:"status"`
-	MapperPath   string         `json:"mapper_path"`
-	ReducerPath  string         `json:"reducer_path"`
-	InputPath    string         `json:"input_path"`
-	OutputPath   string         `json:"output_path"`
-	NumMappers   int32          `json:"num_mappers"`
-	NumReducers  int32          `json:"num_reducers"`
-	InputFormat  string         `json:"input_format"`
-	SubmittedAt  time.Time      `json:"submitted_at"`
-	StartedAt    sql.NullTime   `json:"started_at"`
-	CompletedAt  sql.NullTime   `json:"completed_at"`
-	ErrorMessage sql.NullString `json:"error_message"`
-	WorkflowID   uuid.NullUUID  `json:"workflow_id"`
-	StageName    sql.NullString `json:"stage_name"`
-	InputBucket  string         `json:"input_bucket"`
-	OutputBucket string         `json:"output_bucket"`
+	JobID         uuid.UUID             `json:"job_id"`
+	OwnerUserID   string                `json:"owner_user_id"`
+	OwnerReplica  string                `json:"owner_replica"`
+	Status        string                `json:"status"`
+	MapperPath    string                `json:"mapper_path"`
+	ReducerPath   string                `json:"reducer_path"`
+	InputPath     string                `json:"input_path"`
+	OutputPath    string                `json:"output_path"`
+	NumMappers    int32                 `json:"num_mappers"`
+	NumReducers   int32                 `json:"num_reducers"`
+	InputFormat   string                `json:"input_format"`
+	SubmittedAt   time.Time             `json:"submitted_at"`
+	StartedAt     sql.NullTime          `json:"started_at"`
+	CompletedAt   sql.NullTime          `json:"completed_at"`
+	ErrorMessage  sql.NullString        `json:"error_message"`
+	WorkflowID    uuid.NullUUID         `json:"workflow_id"`
+	StageName     sql.NullString        `json:"stage_name"`
+	InputBucket   string                `json:"input_bucket"`
+	OutputBucket  string                `json:"output_bucket"`
+	OutputRecords int64                 `json:"output_records"`
+	Condition     pqtype.NullRawMessage `json:"condition"`
 }
 
 type MapTask struct {

@@ -20,11 +20,11 @@ SELECT stage_name FROM workflow_dependencies
 WHERE workflow_id = $1 AND depends_on = $2;
 
 -- name: CheckStageDependencies :one
--- Returns the number of parents that are not yet COMPLETED
+-- Returns the number of parents that are not yet COMPLETED or SKIPPED
 SELECT COUNT(*)
 FROM workflow_dependencies d
 JOIN jobs j ON j.workflow_id = d.workflow_id AND j.stage_name = d.depends_on
-WHERE d.workflow_id = $1 AND d.stage_name = $2 AND j.status != 'COMPLETED';
+WHERE d.workflow_id = $1 AND d.stage_name = $2 AND j.status NOT IN ('COMPLETED', 'SKIPPED');
 
 -- name: GetWorkflowStatus :one
 SELECT status FROM workflows WHERE workflow_id = $1;

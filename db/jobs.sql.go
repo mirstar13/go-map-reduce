@@ -10,6 +10,7 @@ import (
 	"database/sql"
 
 	"github.com/google/uuid"
+	"github.com/sqlc-dev/pqtype"
 )
 
 const cancelJob = `-- name: CancelJob :exec
@@ -75,27 +76,29 @@ INSERT INTO jobs (
     workflow_id,
     stage_name,
     input_bucket,
-    output_bucket
+    output_bucket,
+    condition
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 )
-RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket
+RETURNING job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket, output_records, condition
 `
 
 type CreateJobParams struct {
-	OwnerUserID  string         `json:"owner_user_id"`
-	OwnerReplica string         `json:"owner_replica"`
-	MapperPath   string         `json:"mapper_path"`
-	ReducerPath  string         `json:"reducer_path"`
-	InputPath    string         `json:"input_path"`
-	OutputPath   string         `json:"output_path"`
-	NumMappers   int32          `json:"num_mappers"`
-	NumReducers  int32          `json:"num_reducers"`
-	InputFormat  string         `json:"input_format"`
-	WorkflowID   uuid.NullUUID  `json:"workflow_id"`
-	StageName    sql.NullString `json:"stage_name"`
-	InputBucket  string         `json:"input_bucket"`
-	OutputBucket string         `json:"output_bucket"`
+	OwnerUserID  string                `json:"owner_user_id"`
+	OwnerReplica string                `json:"owner_replica"`
+	MapperPath   string                `json:"mapper_path"`
+	ReducerPath  string                `json:"reducer_path"`
+	InputPath    string                `json:"input_path"`
+	OutputPath   string                `json:"output_path"`
+	NumMappers   int32                 `json:"num_mappers"`
+	NumReducers  int32                 `json:"num_reducers"`
+	InputFormat  string                `json:"input_format"`
+	WorkflowID   uuid.NullUUID         `json:"workflow_id"`
+	StageName    sql.NullString        `json:"stage_name"`
+	InputBucket  string                `json:"input_bucket"`
+	OutputBucket string                `json:"output_bucket"`
+	Condition    pqtype.NullRawMessage `json:"condition"`
 }
 
 func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, error) {
@@ -113,6 +116,7 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		arg.StageName,
 		arg.InputBucket,
 		arg.OutputBucket,
+		arg.Condition,
 	)
 	var i Job
 	err := row.Scan(
@@ -135,6 +139,8 @@ func (q *Queries) CreateJob(ctx context.Context, arg CreateJobParams) (Job, erro
 		&i.StageName,
 		&i.InputBucket,
 		&i.OutputBucket,
+		&i.OutputRecords,
+		&i.Condition,
 	)
 	return i, err
 }
@@ -169,7 +175,7 @@ func (q *Queries) FailJob(ctx context.Context, arg FailJobParams) error {
 }
 
 const getActiveJobsByReplica = `-- name: GetActiveJobsByReplica :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket, output_records, condition FROM jobs
 WHERE owner_replica = $1
   AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
 `
@@ -204,6 +210,8 @@ func (q *Queries) GetActiveJobsByReplica(ctx context.Context, ownerReplica strin
 			&i.StageName,
 			&i.InputBucket,
 			&i.OutputBucket,
+			&i.OutputRecords,
+			&i.Condition,
 		); err != nil {
 			return nil, err
 		}
@@ -219,7 +227,7 @@ func (q *Queries) GetActiveJobsByReplica(ctx context.Context, ownerReplica strin
 }
 
 const getAllJobs = `-- name: GetAllJobs :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket, output_records, condition FROM jobs
 ORDER BY submitted_at DESC
 `
 
@@ -252,6 +260,8 @@ func (q *Queries) GetAllJobs(ctx context.Context) ([]Job, error) {
 			&i.StageName,
 			&i.InputBucket,
 			&i.OutputBucket,
+			&i.OutputRecords,
+			&i.Condition,
 		); err != nil {
 			return nil, err
 		}
@@ -267,7 +277,7 @@ func (q *Queries) GetAllJobs(ctx context.Context) ([]Job, error) {
 }
 
 const getJob = `-- name: GetJob :one
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket, output_records, condition FROM jobs
 WHERE job_id = $1
 LIMIT 1
 `
@@ -295,12 +305,14 @@ func (q *Queries) GetJob(ctx context.Context, jobID uuid.UUID) (Job, error) {
 		&i.StageName,
 		&i.InputBucket,
 		&i.OutputBucket,
+		&i.OutputRecords,
+		&i.Condition,
 	)
 	return i, err
 }
 
 const getJobsByUser = `-- name: GetJobsByUser :many
-SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket FROM jobs
+SELECT job_id, owner_user_id, owner_replica, status, mapper_path, reducer_path, input_path, output_path, num_mappers, num_reducers, input_format, submitted_at, started_at, completed_at, error_message, workflow_id, stage_name, input_bucket, output_bucket, output_records, condition FROM jobs
 WHERE owner_user_id = $1
 ORDER BY submitted_at DESC
 `
@@ -334,6 +346,8 @@ func (q *Queries) GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job,
 			&i.StageName,
 			&i.InputBucket,
 			&i.OutputBucket,
+			&i.OutputRecords,
+			&i.Condition,
 		); err != nil {
 			return nil, err
 		}
@@ -346,6 +360,22 @@ func (q *Queries) GetJobsByUser(ctx context.Context, ownerUserID string) ([]Job,
 		return nil, err
 	}
 	return items, nil
+}
+
+const incrementJobOutputRecords = `-- name: IncrementJobOutputRecords :exec
+UPDATE jobs
+SET output_records = output_records + $2
+WHERE job_id = $1
+`
+
+type IncrementJobOutputRecordsParams struct {
+	JobID         uuid.UUID `json:"job_id"`
+	OutputRecords int64     `json:"output_records"`
+}
+
+func (q *Queries) IncrementJobOutputRecords(ctx context.Context, arg IncrementJobOutputRecordsParams) error {
+	_, err := q.exec(ctx, q.incrementJobOutputRecordsStmt, incrementJobOutputRecords, arg.JobID, arg.OutputRecords)
+	return err
 }
 
 const updateJobInputAndStatus = `-- name: UpdateJobInputAndStatus :exec

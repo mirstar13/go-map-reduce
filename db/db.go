@@ -144,6 +144,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getWorkflowStatusStmt, err = db.PrepareContext(ctx, getWorkflowStatus); err != nil {
 		return nil, fmt.Errorf("error preparing query GetWorkflowStatus: %w", err)
 	}
+	if q.incrementJobOutputRecordsStmt, err = db.PrepareContext(ctx, incrementJobOutputRecords); err != nil {
+		return nil, fmt.Errorf("error preparing query IncrementJobOutputRecords: %w", err)
+	}
 	if q.incrementMapTaskRetryStmt, err = db.PrepareContext(ctx, incrementMapTaskRetry); err != nil {
 		return nil, fmt.Errorf("error preparing query IncrementMapTaskRetry: %w", err)
 	}
@@ -397,6 +400,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getWorkflowStatusStmt: %w", cerr)
 		}
 	}
+	if q.incrementJobOutputRecordsStmt != nil {
+		if cerr := q.incrementJobOutputRecordsStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing incrementJobOutputRecordsStmt: %w", cerr)
+		}
+	}
 	if q.incrementMapTaskRetryStmt != nil {
 		if cerr := q.incrementMapTaskRetryStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing incrementMapTaskRetryStmt: %w", cerr)
@@ -556,6 +564,7 @@ type Queries struct {
 	getWorkflowDependenciesStmt         *sql.Stmt
 	getWorkflowStagesStmt               *sql.Stmt
 	getWorkflowStatusStmt               *sql.Stmt
+	incrementJobOutputRecordsStmt       *sql.Stmt
 	incrementMapTaskRetryStmt           *sql.Stmt
 	incrementReduceTaskRetryStmt        *sql.Stmt
 	listStalePluginsStmt                *sql.Stmt
@@ -618,6 +627,7 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		getWorkflowDependenciesStmt:         q.getWorkflowDependenciesStmt,
 		getWorkflowStagesStmt:               q.getWorkflowStagesStmt,
 		getWorkflowStatusStmt:               q.getWorkflowStatusStmt,
+		incrementJobOutputRecordsStmt:       q.incrementJobOutputRecordsStmt,
 		incrementMapTaskRetryStmt:           q.incrementMapTaskRetryStmt,
 		incrementReduceTaskRetryStmt:        q.incrementReduceTaskRetryStmt,
 		listStalePluginsStmt:                q.listStalePluginsStmt,

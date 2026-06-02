@@ -14,7 +14,7 @@ import (
 type Querier interface {
 	AddWorkflowDependency(ctx context.Context, arg AddWorkflowDependencyParams) error
 	CancelJob(ctx context.Context, jobID uuid.UUID) error
-	// Returns the number of parents that are not yet COMPLETED
+	// Returns the number of parents that are not yet COMPLETED or SKIPPED
 	CheckStageDependencies(ctx context.Context, arg CheckStageDependenciesParams) (int64, error)
 	// Useful for an admin dashboard or metrics endpoint.
 	CountJobsByStatus(ctx context.Context) ([]CountJobsByStatusRow, error)
@@ -65,6 +65,7 @@ type Querier interface {
 	GetWorkflowDependencies(ctx context.Context, workflowID uuid.UUID) ([]GetWorkflowDependenciesRow, error)
 	GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUID) ([]Job, error)
 	GetWorkflowStatus(ctx context.Context, workflowID uuid.UUID) (string, error)
+	IncrementJobOutputRecords(ctx context.Context, arg IncrementJobOutputRecordsParams) error
 	IncrementMapTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	IncrementReduceTaskRetry(ctx context.Context, taskID uuid.UUID) error
 	ListStalePlugins(ctx context.Context, dollar_1 sql.NullString) ([]PluginCache, error)
