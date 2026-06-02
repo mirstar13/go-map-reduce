@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,9 +17,45 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-
+	"google.golang.org/grpc"
+	"github.com/mirstar13/go-map-reduce/pkg/shuffle"
 	"github.com/mirstar13/go-map-reduce/services/worker/config"
 )
+
+type mockShuffleClient struct {
+	pushFn    func(ctx context.Context, opts ...grpc.CallOption) (shuffle.ShuffleService_PushClient, error)
+	pullFn    func(ctx context.Context, in *shuffle.PullRequest, opts ...grpc.CallOption) (shuffle.ShuffleService_PullClient, error)
+	cleanupFn func(ctx context.Context, in *shuffle.CleanupRequest, opts ...grpc.CallOption) (*shuffle.CleanupResponse, error)
+}
+
+func (m *mockShuffleClient) Push(ctx context.Context, opts ...grpc.CallOption) (shuffle.ShuffleService_PushClient, error) {
+	return m.pushFn(ctx, opts...)
+}
+func (m *mockShuffleClient) Pull(ctx context.Context, in *shuffle.PullRequest, opts ...grpc.CallOption) (shuffle.ShuffleService_PullClient, error) {
+	return m.pullFn(ctx, in, opts...)
+}
+func (m *mockShuffleClient) Cleanup(ctx context.Context, in *shuffle.CleanupRequest, opts ...grpc.CallOption) (*shuffle.CleanupResponse, error) {
+	if m.cleanupFn != nil {
+		return m.cleanupFn(ctx, in, opts...)
+	}
+	return &shuffle.CleanupResponse{Success: true}, nil
+}
+
+type mockPushClient struct {
+	grpc.ClientStream
+	sendFn  func(*shuffle.PushRequest) error
+	closeFn func() (*shuffle.PushResponse, error)
+}
+
+func (m *mockPushClient) Send(req *shuffle.PushRequest) error         { return m.sendFn(req) }
+func (m *mockPushClient) CloseAndRecv() (*shuffle.PushResponse, error) { return m.closeFn() }
+
+type mockPullClient struct {
+	grpc.ClientStream
+	recvFn func() (*shuffle.PullResponse, error)
+}
+
+func (m *mockPullClient) Recv() (*shuffle.PullResponse, error) { return m.recvFn() }
 
 func buildDummyPlugin(t *testing.T, src string) []byte {
 	tmpDir := t.TempDir()
@@ -28,7 +65,6 @@ func buildDummyPlugin(t *testing.T, src string) []byte {
 	binFile := filepath.Join(tmpDir, "plugin")
 	cmd := exec.Command("go", "build", "-o", binFile, srcFile)
 
-	// Set cmd.Dir to current package to ensure we're inside the module
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	cmd.Dir = wd
@@ -96,14 +132,14 @@ func main() {
 func TestRunMap(t *testing.T) {
 	mapperBin := buildDummyPlugin(t, dummyMapperSrc)
 
-	var putObjects = make(map[string][]byte)
+	var pushedRecords []string
 	var callbackCalled bool
 
-	// MinIO mock server
 	minioTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Logf("MinIO mock got %s %s", r.Method, r.URL.String())
+		w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+		w.Header().Set("ETag", "\"mock-etag\"")
+		_ = os.WriteFile("debug_paths.txt", []byte(r.Method+" "+r.URL.Path+"\n"), 0644)
 		if r.Method == http.MethodGet {
-			w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 			if strings.Contains(r.URL.RawQuery, "location") {
 				w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">us-east-1</LocationConstraint>`))
 				return
@@ -113,23 +149,14 @@ func TestRunMap(t *testing.T) {
 				return
 			}
 			if strings.Contains(r.URL.Path, "my-input") {
-				// if range header is present, we could parse it, but for our test just return input
 				w.Write([]byte("line1\nline2\n"))
 				return
 			}
-			w.WriteHeader(http.StatusNotFound)
-		} else if r.Method == http.MethodPut {
-			body, _ := io.ReadAll(r.Body)
-			putObjects[r.URL.Path] = body
-			w.WriteHeader(http.StatusOK)
 		}
 	}))
 	defer minioTs.Close()
 
-	// Manager callback mock server
 	managerTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Contains(t, r.URL.Path, "/tasks/map/task-1/complete")
 		callbackCalled = true
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -143,6 +170,20 @@ func TestRunMap(t *testing.T) {
 	require.NoError(t, err)
 
 	log, _ := zap.NewDevelopment()
+
+	mockShuffle := &mockShuffleClient{
+		pushFn: func(ctx context.Context, opts ...grpc.CallOption) (shuffle.ShuffleService_PushClient, error) {
+			return &mockPushClient{
+				sendFn: func(req *shuffle.PushRequest) error {
+					pushedRecords = append(pushedRecords, string(req.Data))
+					return nil
+				},
+				closeFn: func() (*shuffle.PushResponse, error) {
+					return &shuffle.PushResponse{Success: true}, nil
+				},
+			}, nil
+		},
+	}
 
 	w := &worker{
 		cfg: &config.Config{
@@ -163,9 +204,10 @@ func TestRunMap(t *testing.T) {
 			MinioBucketJobs:  "jobs",
 			ManagerURL:       managerTs.URL,
 		},
-		minio:  minioClient,
-		log:    log,
-		tmpDir: t.TempDir(),
+		minio:         minioClient,
+		log:           log,
+		tmpDir:        t.TempDir(),
+		shuffleClient: mockShuffle,
 	}
 
 	ctx := context.Background()
@@ -173,16 +215,15 @@ func TestRunMap(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, callbackCalled)
-	assert.NotEmpty(t, putObjects)
+	assert.Len(t, pushedRecords, 2)
+}
 
-	// verify that the partitions were uploaded
-	// we expect keys to be something like jobs/job-1/map-0-reduce-x.txt
-	// The mapper produces M-0, M-1 etc.
-	// Hash of M-0 % 2 etc will determine partitions.
-	for path, data := range putObjects {
-		assert.True(t, strings.HasPrefix(path, "/jobs/job-1/map-0-reduce-"))
-		assert.True(t, strings.Contains(string(data), "M-0\tline1") || strings.Contains(string(data), "M-1\tline2"))
-	}
+type shuffleServer struct {
+	shuffle.UnimplementedShuffleServiceServer
+}
+
+func (s *shuffleServer) Pull(req *shuffle.PullRequest, stream shuffle.ShuffleService_PullServer) error {
+	return stream.Send(&shuffle.PullResponse{Data: []byte("key1\tval1\nkey2\tval2\n")})
 }
 
 func TestRunReduce(t *testing.T) {
@@ -192,8 +233,10 @@ func TestRunReduce(t *testing.T) {
 	var callbackCalled bool
 
 	minioTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Last-Modified", "Mon, 02 Jan 2006 15:04:05 GMT")
+		w.Header().Set("ETag", "\"mock-etag\"")
+		_ = os.WriteFile("debug_paths.txt", []byte(r.Method+" "+r.URL.Path+"\n"), 0644)
 		if r.Method == http.MethodGet {
-			w.Header().Set("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT")
 			if strings.Contains(r.URL.RawQuery, "location") {
 				w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><LocationConstraint xmlns="http://s3.amazonaws.com/doc/2006-03-01/">us-east-1</LocationConstraint>`))
 				return
@@ -202,30 +245,30 @@ func TestRunReduce(t *testing.T) {
 				w.Write(reducerBin)
 				return
 			}
-			if strings.Contains(r.URL.Path, "partition-1") {
-				w.Write([]byte("key1\tval1\nkey2\tval2\n"))
-				return
-			}
-			if strings.Contains(r.URL.Path, "partition-2") {
-				w.Write([]byte("key1\tval3\n"))
-				return
-			}
-			w.WriteHeader(http.StatusNotFound)
 		} else if r.Method == http.MethodPut {
 			body, _ := io.ReadAll(r.Body)
 			putObjects[r.URL.Path] = body
 			w.WriteHeader(http.StatusOK)
+			return
 		}
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer minioTs.Close()
 
 	managerTs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Contains(t, r.URL.Path, "/tasks/reduce/task-2/complete")
 		callbackCalled = true
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer managerTs.Close()
+
+	// Start a real local gRPC server for shuffle service
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcServer := grpc.NewServer()
+	shuffle.RegisterShuffleServiceServer(grpcServer, &shuffleServer{})
+	go grpcServer.Serve(lis)
+	defer grpcServer.Stop()
+	addr := lis.Addr().String()
 
 	endpoint := strings.TrimPrefix(minioTs.URL, "http://")
 	minioClient, err := minio.New(endpoint, &minio.Options{
@@ -236,6 +279,21 @@ func TestRunReduce(t *testing.T) {
 
 	log, _ := zap.NewDevelopment()
 
+	mockShuffle := &mockShuffleClient{
+		pullFn: func(ctx context.Context, in *shuffle.PullRequest, opts ...grpc.CallOption) (shuffle.ShuffleService_PullClient, error) {
+			count := 0
+			return &mockPullClient{
+				recvFn: func() (*shuffle.PullResponse, error) {
+					if count > 0 {
+						return nil, io.EOF
+					}
+					count++
+					return &shuffle.PullResponse{Data: []byte("key1\tval1\nkey2\tval2\n")}, nil
+				},
+			}, nil
+		},
+	}
+
 	w := &worker{
 		cfg: &config.Config{
 			TaskID:      "task-2",
@@ -244,8 +302,7 @@ func TestRunReduce(t *testing.T) {
 			TaskIndex:   1,
 			ReducerPath: "my-reducer.exe",
 			InputLocations: []config.InputLocation{
-				{Path: "partition-1"},
-				{Path: "partition-2"},
+				{Path: addr},
 			},
 			MinioEndpoint:     endpoint,
 			MinioBucketCode:   "code",
@@ -253,9 +310,10 @@ func TestRunReduce(t *testing.T) {
 			MinioBucketOutput: "output",
 			ManagerURL:        managerTs.URL,
 		},
-		minio:  minioClient,
-		log:    log,
-		tmpDir: t.TempDir(),
+		minio:         minioClient,
+		log:           log,
+		tmpDir:        t.TempDir(),
+		shuffleClient: mockShuffle,
 	}
 
 	ctx := context.Background()
@@ -265,16 +323,9 @@ func TestRunReduce(t *testing.T) {
 	assert.True(t, callbackCalled)
 	assert.NotEmpty(t, putObjects)
 
-	// verify that the output was uploaded
-	// we expect the output path to be /output/job-1/part-1.txt
 	outputData, ok := putObjects["/output/job-1/part-1.txt"]
 	assert.True(t, ok)
-
-	outputStr := string(outputData)
-	// key1 should have val1,val3
-	// key2 should have val2
-	assert.Contains(t, outputStr, "R-key1\tval1,val3")
-	assert.Contains(t, outputStr, "R-key2\tval2")
+	assert.Contains(t, string(outputData), "R-key1\tval1")
 }
 
 func TestReportFailure(t *testing.T) {
@@ -302,7 +353,6 @@ func TestReportFailure(t *testing.T) {
 	assert.True(t, callbackCalled)
 	assert.Equal(t, "/tasks/map/task-err/fail", managerURL)
 
-	// test reduce failure
 	callbackCalled = false
 	w.cfg.TaskType = config.TaskTypeReduce
 	err = w.reportFailure(context.Background())

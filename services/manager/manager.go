@@ -11,6 +11,8 @@ import (
 	"github.com/gofiber/fiber/v3"
 	fiberlog "github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/recover"
+	"github.com/gofiber/fiber/v3/middleware/adaptor"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -111,7 +113,7 @@ func main() {
 	go wd.Run(rootCtx)
 
 	jobHandler := handler.NewJobHandler(queries, registry, spl, disp, cfg, log, launchSupervisor)
-	taskHandler := handler.NewTaskHandler(queries, registry, tracker, minioClient, disp, cfg, log)
+	taskHandler := handler.NewTaskHandler(sqlDB, queries, registry, tracker, minioClient, disp, cfg, log)
 	workflowHandler := handler.NewWorkflowHandler(queries, cfg, log, launchSupervisor)
 
 	app := fiber.New(fiber.Config{
@@ -134,6 +136,8 @@ func main() {
 	app.Get("/healthz", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "replica": cfg.MyReplicaName})
 	})
+
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
 
 	// Workers call these directly. No user auth — they are internal pod-to-pod
 	// calls within the cluster network.

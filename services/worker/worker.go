@@ -18,8 +18,10 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 
+	"github.com/mirstar13/go-map-reduce/pkg/metrics"
 	"github.com/mirstar13/go-map-reduce/pkg/plugin"
 	"github.com/mirstar13/go-map-reduce/pkg/shuffle"
 	"github.com/mirstar13/go-map-reduce/services/worker/config"
@@ -78,6 +80,14 @@ func main() {
 		log.Fatal("failed to create tmp dir", zap.Error(err))
 	}
 
+	// Start metrics server
+	go func() {
+		w.log.Info("starting metrics server", zap.String("port", "9092"))
+		if err := http.ListenAndServe(":9092", promhttp.Handler()); err != nil {
+			w.log.Error("metrics server failed", zap.Error(err))
+		}
+	}()
+
 	var runErr error
 	switch cfg.TaskType {
 	case config.TaskTypeMap:
@@ -91,10 +101,14 @@ func main() {
 		if err := w.reportFailure(ctx); err != nil {
 			log.Error("failed to report failure", zap.Error(err))
 		}
+		// Allow metrics scrape before exit
+		time.Sleep(5 * time.Second)
 		os.Exit(1)
 	}
 
 	log.Info("task completed successfully")
+	// Allow metrics scrape before exit
+	time.Sleep(5 * time.Second)
 }
 
 type worker struct {
@@ -111,6 +125,13 @@ type worker struct {
 // 3. Execute mapper plugin and stream records directly to the Shuffle Service
 // 4. Report completion to Manager
 func (w *worker) runMap(ctx context.Context) error {
+	start := time.Now()
+	status := "failure"
+	defer func() {
+		metrics.TasksTotal.WithLabelValues("map", status).Inc()
+		metrics.TaskDuration.WithLabelValues("map", status).Observe(time.Since(start).Seconds())
+	}()
+
 	w.log.Info("starting map task",
 		zap.String("input_file", w.cfg.InputSpec.File),
 		zap.Int64("offset", w.cfg.InputSpec.Offset),
@@ -118,6 +139,9 @@ func (w *worker) runMap(ctx context.Context) error {
 		zap.String("mapper", w.cfg.MapperPath),
 		zap.String("input_bucket", w.cfg.MinioBucketInput),
 	)
+
+	// Record input bytes
+	metrics.TaskBytesTotal.WithLabelValues("map_input").Add(float64(w.cfg.InputSpec.Length))
 
 	// Download compiled mapper plugin
 	mapperLocal, err := w.downloadPlugin(ctx, w.cfg.MapperPath)
@@ -166,14 +190,16 @@ func (w *worker) runMap(ctx context.Context) error {
 
 		for _, r := range records {
 			reducerIdx := w.partition(r.Key, mapper)
+			data := w.recordToBytes(r)
 			if err := stream.Send(&shuffle.PushRequest{
 				JobId:        w.cfg.JobID,
 				TaskIndex:    int32(w.cfg.TaskIndex),
 				ReducerIndex: int32(reducerIdx),
-				Data:         w.recordToBytes(r),
+				Data:         data,
 			}); err != nil {
 				return fmt.Errorf("push record to shuffle: %w", err)
 			}
+			metrics.TaskBytesTotal.WithLabelValues("map_output").Add(float64(len(data)))
 		}
 		batch = batch[:0]
 		return nil
@@ -218,7 +244,11 @@ func (w *worker) runMap(ctx context.Context) error {
 	}
 
 	// Report completion to manager
-	return w.reportMapComplete(ctx, nil)
+	if err := w.reportMapComplete(ctx, nil); err != nil {
+		return err
+	}
+	status = "success"
+	return nil
 }
 
 // runReduce executes a reduce task:
@@ -228,6 +258,13 @@ func (w *worker) runMap(ctx context.Context) error {
 // 4. Stream sorted records, group by key, and execute reducer
 // 5. Stream final output directly to MinIO
 func (w *worker) runReduce(ctx context.Context) error {
+	start := time.Now()
+	status := "failure"
+	defer func() {
+		metrics.TasksTotal.WithLabelValues("reduce", status).Inc()
+		metrics.TaskDuration.WithLabelValues("reduce", status).Observe(time.Since(start).Seconds())
+	}()
+
 	w.log.Info("starting reduce task",
 		zap.String("reducer", w.cfg.ReducerPath),
 		zap.Int("num_inputs", len(w.cfg.InputLocations)),
@@ -293,6 +330,7 @@ func (w *worker) runReduce(ctx context.Context) error {
 				rf.Close()
 				return fmt.Errorf("write to raw file: %w", err)
 			}
+			metrics.TaskBytesTotal.WithLabelValues("reduce_input").Add(float64(len(resp.Data)))
 		}
 		conn.Close()
 
@@ -335,6 +373,7 @@ func (w *worker) runReduce(ctx context.Context) error {
 	lineCount := 0
 	const batchSize = 100 // Smaller batch size for reduce as values can be large
 	var reduceBatch []plugin.ReduceInput
+	var outputRecords int64
 
 	processReduceBatch := func() error {
 		if len(reduceBatch) == 0 {
@@ -346,6 +385,7 @@ func (w *worker) runReduce(ctx context.Context) error {
 		}
 		for _, r := range records {
 			fmt.Fprintf(bw, "%s\t%s\n", r.Key, r.Value)
+			outputRecords++
 		}
 		reduceBatch = reduceBatch[:0]
 		return nil
@@ -395,6 +435,7 @@ func (w *worker) runReduce(ctx context.Context) error {
 		return fmt.Errorf("flush output writer: %w", err)
 	}
 	stat, _ := of.Stat()
+	metrics.TaskBytesTotal.WithLabelValues("reduce_output").Add(float64(stat.Size()))
 	of.Seek(0, 0)
 
 	// Upload to MinIO
@@ -405,14 +446,21 @@ func (w *worker) runReduce(ctx context.Context) error {
 	objectKey := fmt.Sprintf("%s/part-%d.txt", prefix, w.cfg.TaskIndex)
 	_, err = w.minio.PutObject(ctx, w.cfg.MinioBucketOutput, objectKey,
 		of, stat.Size(),
-		minio.PutObjectOptions{ContentType: "text/plain"},
+		minio.PutObjectOptions{
+			ContentType:           "text/plain",
+			DisableContentSha256: true,
+		},
 	)
 	of.Close()
 	if err != nil {
 		return fmt.Errorf("upload results: %w", err)
 	}
 
-	return w.reportReduceComplete(ctx, objectKey)
+	if err := w.reportReduceComplete(ctx, objectKey, outputRecords); err != nil {
+		return err
+	}
+	status = "success"
+	return nil
 }
 
 // externalSort implements a multi-pass merge sort to handle large files.
@@ -663,11 +711,12 @@ func (w *worker) reportMapComplete(ctx context.Context, locations []outputLocati
 }
 
 // reportReduceComplete sends completion callback to the Manager.
-func (w *worker) reportReduceComplete(ctx context.Context, outputPath string) error {
+func (w *worker) reportReduceComplete(ctx context.Context, outputPath string, outputRecords int64) error {
 	url := fmt.Sprintf("%s/tasks/reduce/%s/complete", w.cfg.ManagerURL, w.cfg.TaskID)
 
 	body, err := json.Marshal(map[string]interface{}{
-		"output_path": outputPath,
+		"output_path":    outputPath,
+		"output_records": outputRecords,
 	})
 	if err != nil {
 		return fmt.Errorf("marshal body: %w", err)

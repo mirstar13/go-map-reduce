@@ -4,8 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 	"github.com/mirstar13/go-map-reduce/pkg/shuffle"
 )
@@ -22,6 +24,14 @@ func main() {
 
 	s := grpc.NewServer()
 	shuffle.RegisterShuffleServiceServer(s, NewServer())
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		fmt.Println("Metrics server listening on :9091")
+		if err := http.ListenAndServe(":9091", nil); err != nil {
+			fmt.Printf("metrics server failed: %v\n", err)
+		}
+	}()
 
 	fmt.Printf("Shuffle service listening on %v\n", lis.Addr())
 	if err := s.Serve(lis); err != nil {

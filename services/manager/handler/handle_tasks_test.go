@@ -21,11 +21,11 @@ import (
 )
 
 // newTaskApp wires a Fiber app for task-callback routes.
-// Task routes are internal (no auth) — workers call them directly.
 func newTaskApp(t *testing.T, q db.Querier) *fiber.App {
 	t.Helper()
 	reg := supervisor.NewRegistry()
-	h := NewTaskHandler(q, reg, nil, nil, nil, zap.NewNop())
+	// Pass nil for *sql.DB, shuffle.Tracker, minio.Client, interfaces.Dispatcher, config.Config in tests
+	h := NewTaskHandler(nil, q, reg, nil, nil, nil, nil, zap.NewNop())
 	app := fiber.New()
 	app.Post("/tasks/map/:id/complete", h.CompleteMapTask)
 	app.Post("/tasks/map/:id/fail", h.FailMapTask)
@@ -36,11 +36,10 @@ func newTaskApp(t *testing.T, q db.Querier) *fiber.App {
 	return app
 }
 
-// newTaskAppWithRegistry wires a Fiber app for task routes with a shared registry,
-// allowing tests that verify Notify is called.
+// newTaskAppWithRegistry wires a Fiber app for task routes with a shared registry.
 func newTaskAppWithRegistry(t *testing.T, q db.Querier, reg *supervisor.Registry) *fiber.App {
 	t.Helper()
-	h := NewTaskHandler(q, reg, nil, nil, nil, zap.NewNop())
+	h := NewTaskHandler(nil, q, reg, nil, nil, nil, nil, zap.NewNop())
 	app := fiber.New()
 	app.Post("/tasks/map/:id/complete", h.CompleteMapTask)
 	app.Post("/tasks/map/:id/fail", h.FailMapTask)

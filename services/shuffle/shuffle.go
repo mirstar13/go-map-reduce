@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"github.com/mirstar13/go-map-reduce/pkg/metrics"
 	"github.com/mirstar13/go-map-reduce/pkg/shuffle"
 )
 
@@ -23,6 +24,7 @@ func (s *Server) Push(stream shuffle.ShuffleService_PushServer) error {
 			return stream.SendAndClose(&shuffle.PushResponse{Success: true})
 		}
 		if err != nil { return err }
+		metrics.ShufflePushBytesTotal.Add(float64(len(req.Data)))
 		s.mu.Lock()
 		if s.data[req.JobId] == nil { s.data[req.JobId] = make(map[int32][][]byte) }
 		s.data[req.JobId][req.ReducerIndex] = append(s.data[req.JobId][req.ReducerIndex], req.Data)
@@ -37,6 +39,7 @@ func (s *Server) Pull(req *shuffle.PullRequest, stream shuffle.ShuffleService_Pu
 	chunks := jobData[req.ReducerIndex]
 	s.mu.RUnlock()
 	for _, chunk := range chunks {
+		metrics.ShufflePullBytesTotal.Add(float64(len(chunk)))
 		if err := stream.Send(&shuffle.PullResponse{Data: chunk}); err != nil { return err }
 	}
 	return nil

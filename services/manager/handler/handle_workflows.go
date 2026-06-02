@@ -2,10 +2,12 @@ package handler
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/sqlc-dev/pqtype"
 	"go.uber.org/zap"
 
 	"github.com/mirstar13/go-map-reduce/db"
@@ -100,6 +102,16 @@ func (h *WorkflowHandler) SubmitWorkflow(c fiber.Ctx) error {
 		// Calculate output path for this stage
 		outputPath := fmt.Sprintf("workflows/%s/%s", wf.WorkflowID, name)
 
+		var cond pqtype.NullRawMessage
+		if stageSpec.Condition != nil {
+			condBytes, err := json.Marshal(stageSpec.Condition)
+			if err != nil {
+				h.log.Error("failed to marshal stage condition", zap.String("stage", name), zap.Error(err))
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to process stage condition"})
+			}
+			cond = pqtype.NullRawMessage{RawMessage: condBytes, Valid: true}
+		}
+
 		job, err := h.queries.CreateJob(c.Context(), db.CreateJobParams{
 			OwnerUserID:  id.Subject,
 			OwnerReplica: h.cfg.MyReplicaName,
@@ -114,6 +126,7 @@ func (h *WorkflowHandler) SubmitWorkflow(c fiber.Ctx) error {
 			StageName:    sql.NullString{String: name, Valid: true},
 			InputBucket:  h.cfg.MinioBucketInput,
 			OutputBucket: h.cfg.MinioBucketOutput,
+			Condition:    cond,
 		})
 		if err != nil {
 			h.log.Error("failed to create job for workflow stage", zap.String("stage", name), zap.Error(err))

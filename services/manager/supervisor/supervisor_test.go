@@ -19,6 +19,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
 	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
 	"github.com/mirstar13/go-map-reduce/services/manager/splitter"
+	"github.com/mirstar13/go-map-reduce/services/manager/shuffle"
 	"github.com/sqlc-dev/pqtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -493,7 +494,7 @@ var testCfg = &config.Config{
 func newSupervisor(job db.Job, q db.Querier, spl interfaces.Splitter, disp interfaces.Dispatcher) *Supervisor {
 	reg := NewRegistry()
 	log, _ := zap.NewDevelopment()
-	return New(job, q, spl, disp, nil, testCfg, log, reg, nil, nil)
+	return New(job, q, spl, disp, nil, testCfg, log, reg, shuffle.NewTracker(), nil)
 }
 
 func baseJob(status string) db.Job {
@@ -1067,6 +1068,7 @@ func TestDispatchPendingReduceTasks_Success_PassesCorrectInputLocations(t *testi
 	}
 
 	sup := newSupervisor(job, q, nil, disp)
+	sup.tracker.Register(job.JobID, 0, "node-1")
 	err := sup.dispatchPendingReduceTasks(context.Background())
 
 	require.NoError(t, err)
@@ -1074,11 +1076,11 @@ func TestDispatchPendingReduceTasks_Success_PassesCorrectInputLocations(t *testi
 	assert.Equal(t, int(task.TaskIndex), capturedSpec.TaskIndex)
 	assert.Equal(t, job.ReducerPath, capturedSpec.ReducerPath)
 
-	// Only the reducer-0 file should be in the input locations for this task.
+	// The path should now be the shuffle service address
 	var locs []map[string]interface{}
 	require.NoError(t, json.Unmarshal(capturedSpec.InputLocations, &locs))
 	require.Len(t, locs, 1)
-	assert.Equal(t, "jobs/abc/map-0-reduce-0.jsonl", locs[0]["path"])
+	assert.Equal(t, "node-1:50051", locs[0]["path"])
 }
 
 func TestStartReducePhase_CreatesCorrectNumberOfReduceTasks(t *testing.T) {
@@ -1507,3 +1509,4 @@ func TestDoBuild_CacheMiss_DispatchesBuild(t *testing.T) {
 	assert.Contains(t, statusUpdates, "BUILDING")
 	assert.Equal(t, 2, buildsDispatched)
 }
+func (m *mockQuerier) IncrementJobOutputRecords(ctx context.Context, arg db.IncrementJobOutputRecordsParams) error { return nil }

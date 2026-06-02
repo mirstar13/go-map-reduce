@@ -15,6 +15,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/mirstar13/go-map-reduce/db"
+	"github.com/mirstar13/go-map-reduce/pkg/metrics"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
 	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
 	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
@@ -158,6 +159,14 @@ func (s *Supervisor) Run(ctx context.Context) {
 
 		if s.isTerminal() {
 			s.Cleanup(ctx)
+			
+			// Record metrics
+			metrics.JobsTotal.WithLabelValues(s.job.Status).Inc()
+			if s.job.StartedAt.Valid {
+				duration := time.Since(s.job.StartedAt.Time).Seconds()
+				metrics.JobDuration.WithLabelValues(s.job.Status).Observe(duration)
+			}
+
 			if s.onTerminal != nil {
 				s.onTerminal(ctx, s.jobID)
 			}

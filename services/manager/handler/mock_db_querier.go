@@ -467,3 +467,4 @@ func (m *mockQuerier) DeleteCachedPlugin(ctx context.Context, sourceHash string)
 
 
 
+func (m *mockQuerier) IncrementJobOutputRecords(ctx context.Context, arg db.IncrementJobOutputRecordsParams) error { return nil }

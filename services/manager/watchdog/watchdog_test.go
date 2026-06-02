@@ -664,3 +664,4 @@ func TestRun_ContextCancellation_Exits(t *testing.T) {
 		t.Fatal("Run did not exit after context cancellation")
 	}
 }
+func (m *mockQuerier) IncrementJobOutputRecords(ctx context.Context, arg db.IncrementJobOutputRecordsParams) error { return nil }
