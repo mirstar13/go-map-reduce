@@ -21,7 +21,10 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/mirstar13/go-map-reduce/pkg/plugin"
+	"github.com/mirstar13/go-map-reduce/pkg/shuffle"
 	"github.com/mirstar13/go-map-reduce/services/worker/config"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -55,11 +58,20 @@ func main() {
 		log.Fatal("failed to create minio client", zap.Error(err))
 	}
 
+	// Connect to Shuffle Service
+	conn, err := grpc.Dial(cfg.ShuffleServiceURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Fatal("failed to connect to shuffle service", zap.Error(err))
+	}
+	defer conn.Close()
+	shuffleClient := shuffle.NewShuffleServiceClient(conn)
+
 	w := &worker{
-		cfg:    cfg,
-		minio:  minioClient,
-		log:    log,
-		tmpDir: "/tmp/worker",
+		cfg:           cfg,
+		minio:         minioClient,
+		shuffleClient: shuffleClient,
+		log:           log,
+		tmpDir:        "/tmp/worker",
 	}
 
 	if err := os.MkdirAll(w.tmpDir, 0755); err != nil {
@@ -86,24 +98,25 @@ func main() {
 }
 
 type worker struct {
-	cfg    *config.Config
-	minio  *minio.Client
-	log    *zap.Logger
-	tmpDir string
+	cfg           *config.Config
+	minio         *minio.Client
+	shuffleClient shuffle.ShuffleServiceClient
+	log           *zap.Logger
+	tmpDir        string
 }
 
 // runMap executes a map task:
 // 1. Download compiled mapper plugin from MinIO
 // 2. Download input data (byte range) from MinIO
-// 3. Execute mapper plugin, partition output by reducer and stream to disk
-// 4. Upload partitioned output to MinIO
-// 5. Report completion to Manager
+// 3. Execute mapper plugin and stream records directly to the Shuffle Service
+// 4. Report completion to Manager
 func (w *worker) runMap(ctx context.Context) error {
 	w.log.Info("starting map task",
 		zap.String("input_file", w.cfg.InputSpec.File),
 		zap.Int64("offset", w.cfg.InputSpec.Offset),
 		zap.Int64("length", w.cfg.InputSpec.Length),
 		zap.String("mapper", w.cfg.MapperPath),
+		zap.String("input_bucket", w.cfg.MinioBucketInput),
 	)
 
 	// Download compiled mapper plugin
@@ -126,29 +139,10 @@ func (w *worker) runMap(ctx context.Context) error {
 	}
 	defer inputObj.Close()
 
-	// Create local partitioned files to avoid keeping all results in RAM
-	partitionFiles := make(map[int]*os.File)
-	partitionWriters := make(map[int]*bufio.Writer)
-	defer func() {
-		for _, f := range partitionFiles {
-			f.Close()
-			os.Remove(f.Name())
-		}
-	}()
-
-	// Helper to get or create a partitioned file
-	getPartitionWriter := func(reducerIdx int) (*bufio.Writer, error) {
-		if pw, ok := partitionWriters[reducerIdx]; ok {
-			return pw, nil
-		}
-		f, err := os.CreateTemp(w.tmpDir, fmt.Sprintf("map-p%d-", reducerIdx))
-		if err != nil {
-			return nil, err
-		}
-		partitionFiles[reducerIdx] = f
-		pw := bufio.NewWriter(f)
-		partitionWriters[reducerIdx] = pw
-		return pw, nil
+	// Initialize Shuffle Service stream
+	stream, err := w.shuffleClient.Push(ctx)
+	if err != nil {
+		return fmt.Errorf("open shuffle stream: %w", err)
 	}
 
 	// Execute mapper on each input line via streaming with batching
@@ -171,12 +165,15 @@ func (w *worker) runMap(ctx context.Context) error {
 		}
 
 		for _, r := range records {
-			reducerIdx := w.hashKey(r.Key) % w.cfg.NumReducers
-			pw, err := getPartitionWriter(reducerIdx)
-			if err != nil {
-				return fmt.Errorf("get partition writer: %w", err)
+			reducerIdx := w.partition(r.Key, mapper)
+			if err := stream.Send(&shuffle.PushRequest{
+				JobId:        w.cfg.JobID,
+				TaskIndex:    int32(w.cfg.TaskIndex),
+				ReducerIndex: int32(reducerIdx),
+				Data:         w.recordToBytes(r),
+			}); err != nil {
+				return fmt.Errorf("push record to shuffle: %w", err)
 			}
-			fmt.Fprintf(pw, "%s\t%s\n", r.Key, r.Value)
 		}
 		batch = batch[:0]
 		return nil
@@ -187,16 +184,16 @@ func (w *worker) runMap(ctx context.Context) error {
 		if line == "" {
 			continue
 		}
-		
+
 		key := fmt.Sprintf("%d", w.cfg.InputSpec.Offset+int64(lineCount))
 		batch = append(batch, plugin.MapInput{Key: key, Value: line})
-		
+
 		if len(batch) >= batchSize {
 			if err := processBatch(); err != nil {
 				return err
 			}
 		}
-		
+
 		lineCount++
 		if lineCount%100000 == 0 {
 			w.log.Info("map progress", zap.Int("lines_processed", lineCount))
@@ -211,153 +208,17 @@ func (w *worker) runMap(ctx context.Context) error {
 		return fmt.Errorf("scanner error: %w", err)
 	}
 
-	// Flush all partition writers
-	for _, pw := range partitionWriters {
-		if err := pw.Flush(); err != nil {
-			return fmt.Errorf("flush partition writer: %w", err)
-		}
+	// Close stream and wait for response
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return fmt.Errorf("close shuffle stream: %w", err)
 	}
-
-	// Apply Combiner if implemented
-	var combiner plugin.Combiner
-	if c, ok := mapper.(plugin.Combiner); ok {
-		combiner = c
-		w.log.Info("combiner detected; will perform local aggregation")
-	}
-
-	// Upload each partition file to MinIO (potentially after combining)
-	outputLocations := make([]outputLocation, 0, len(partitionFiles))
-	for reducerIdx, f := range partitionFiles {
-		var uploadReader io.Reader
-		var uploadSize int64
-		var combinedFile string
-		var isCombined bool
-
-		if combiner != nil {
-			// Sort the partition locally and combine
-			cFile, err := w.sortAndCombine(f.Name(), combiner)
-			if err != nil {
-				if err.Error() == "combiner not implemented" {
-					w.log.Debug("combiner not implemented by plugin, falling back to raw output")
-					combiner = nil // stop trying for future partitions
-				} else {
-					return fmt.Errorf("sort and combine partition %d: %w", reducerIdx, err)
-				}
-			} else {
-				combinedFile = cFile
-				isCombined = true
-			}
-		}
-
-		if isCombined {
-			defer os.Remove(combinedFile)
-			cf, err := os.Open(combinedFile)
-			if err != nil {
-				return fmt.Errorf("open combined partition %d: %w", reducerIdx, err)
-			}
-			defer cf.Close()
-			stat, _ := cf.Stat()
-			uploadReader = cf
-			uploadSize = stat.Size()
-		} else {
-			if _, err := f.Seek(0, 0); err != nil {
-				return fmt.Errorf("seek partition %d: %w", reducerIdx, err)
-			}
-			stat, _ := f.Stat()
-			uploadReader = f
-			uploadSize = stat.Size()
-		}
-
-		objectKey := fmt.Sprintf("%s/map-%d-reduce-%d.txt", w.cfg.JobID, w.cfg.TaskIndex, reducerIdx)
-		_, err := w.minio.PutObject(ctx, w.cfg.MinioBucketJobs, objectKey,
-			uploadReader, uploadSize,
-			minio.PutObjectOptions{ContentType: "text/plain"},
-		)
-		if err != nil {
-			return fmt.Errorf("upload partition %d: %w", reducerIdx, err)
-		}
-
-		outputLocations = append(outputLocations, outputLocation{
-			ReducerIndex: reducerIdx,
-			Path:         objectKey,
-		})
+	if !resp.Success {
+		return fmt.Errorf("shuffle service reported failure")
 	}
 
 	// Report completion to manager
-	return w.reportMapComplete(ctx, outputLocations)
-}
-
-// sortAndCombine sorts a partition file and applies the combiner.
-func (w *worker) sortAndCombine(path string, combiner plugin.Combiner) (string, error) {
-	sortedPath, err := w.externalSort(path)
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(sortedPath)
-
-	sf, err := os.Open(sortedPath)
-	if err != nil {
-		return "", err
-	}
-	defer sf.Close()
-
-	output, err := os.CreateTemp(w.tmpDir, "combined-")
-	if err != nil {
-		return "", err
-	}
-	defer output.Close()
-
-	scanner := bufio.NewScanner(sf)
-	const maxTokenSize = 10 * 1024 * 1024 // 10MB
-	scanner.Buffer(make([]byte, 64*1024), maxTokenSize)
-	var currentKey string
-	var currentValues []string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-		parts := strings.SplitN(line, "\t", 2)
-		key := parts[0]
-		val := ""
-		if len(parts) > 1 {
-			val = parts[1]
-		}
-
-		if key != currentKey && len(currentValues) > 0 {
-			records, err := combiner.Combine(currentKey, currentValues)
-			if err != nil {
-				// If the plugin specifically says it's not implemented, we return a wrapped error
-				// that we can detect to stop trying to combine.
-				if strings.Contains(err.Error(), "not implemented") {
-					return "", fmt.Errorf("combiner not implemented")
-				}
-				return "", fmt.Errorf("combiner failed for key %q: %w", currentKey, err)
-			}
-			for _, r := range records {
-				fmt.Fprintf(output, "%s\t%s\n", r.Key, r.Value)
-			}
-			currentValues = nil
-		}
-		currentKey = key
-		currentValues = append(currentValues, val)
-	}
-
-	if len(currentValues) > 0 {
-		records, err := combiner.Combine(currentKey, currentValues)
-		if err != nil {
-			if strings.Contains(err.Error(), "not implemented") {
-				return "", fmt.Errorf("combiner not implemented")
-			}
-			return "", fmt.Errorf("combiner failed for key %q: %w", currentKey, err)
-		}
-		for _, r := range records {
-			fmt.Fprintf(output, "%s\t%s\n", r.Key, r.Value)
-		}
-	}
-
-	return output.Name(), nil
+	return w.reportMapComplete(ctx, nil)
 }
 
 // runReduce executes a reduce task:
@@ -368,8 +229,10 @@ func (w *worker) sortAndCombine(path string, combiner plugin.Combiner) (string, 
 // 5. Stream final output directly to MinIO
 func (w *worker) runReduce(ctx context.Context) error {
 	w.log.Info("starting reduce task",
-		zap.Int("input_locations", len(w.cfg.InputLocations)),
 		zap.String("reducer", w.cfg.ReducerPath),
+		zap.Int("num_inputs", len(w.cfg.InputLocations)),
+		zap.String("output_path", w.cfg.OutputPath),
+		zap.String("output_bucket", w.cfg.MinioBucketOutput),
 	)
 
 	// Download compiled reducer plugin
@@ -508,7 +371,11 @@ func (w *worker) runReduce(ctx context.Context) error {
 	of.Seek(0, 0)
 
 	// Upload to MinIO
-	objectKey := fmt.Sprintf("%s/part-%d.txt", w.cfg.JobID, w.cfg.TaskIndex)
+	prefix := w.cfg.JobID
+	if w.cfg.OutputPath != "" {
+		prefix = w.cfg.OutputPath
+	}
+	objectKey := fmt.Sprintf("%s/part-%d.txt", prefix, w.cfg.TaskIndex)
 	_, err = w.minio.PutObject(ctx, w.cfg.MinioBucketOutput, objectKey,
 		of, stat.Size(),
 		minio.PutObjectOptions{ContentType: "text/plain"},
@@ -730,6 +597,23 @@ func (w *worker) hashKey(key string) int {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return int(h.Sum32())
+}
+
+// partition determines which reducer should handle a key.
+func (w *worker) partition(key string, mapper plugin.Mapper) int {
+	if p, ok := mapper.(plugin.Partitioner); ok {
+		idx, err := p.Partition(key, w.cfg.NumReducers)
+		if err == nil {
+			return idx % w.cfg.NumReducers
+		}
+		w.log.Warn("custom partitioner failed, falling back to hash", zap.Error(err))
+	}
+	return w.hashKey(key) % w.cfg.NumReducers
+}
+
+// recordToBytes encodes a Record for the Shuffle Service.
+func (w *worker) recordToBytes(r plugin.Record) []byte {
+	return []byte(fmt.Sprintf("%s\t%s\n", r.Key, r.Value))
 }
 
 type outputLocation struct {

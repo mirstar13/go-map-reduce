@@ -41,6 +41,9 @@ type Config struct {
 	// Manager callback
 	ManagerURL string // MANAGER_URL (required)
 
+	// Shuffle Service
+	ShuffleServiceURL string // SHUFFLE_SERVICE_URL (defaults to localhost:50051)
+
 	// Map task specific
 	InputSpec   *InputSpec // INPUT_PATH as JSON (map only)
 	MapperPath  string     // MAPPER_PATH (map only)
@@ -49,6 +52,7 @@ type Config struct {
 	// Reduce task specific
 	ReducerPath    string          // REDUCER_PATH (reduce only)
 	InputLocations []InputLocation // INPUT_LOCATIONS as JSON array (reduce only)
+	OutputPath     string          // OUTPUT_PATH (reduce only)
 
 	// MinIO configuration
 	MinioEndpoint     string // MINIO_ENDPOINT (required)
@@ -72,14 +76,17 @@ func Load() (*Config, error) {
 	v.SetDefault("minio_bucket_code", "code")
 	v.SetDefault("minio_bucket_jobs", "jobs")
 	v.SetDefault("minio_bucket_output", "output")
+	v.SetDefault("shuffle_service_url", "localhost:50051")
 
 	cfg := &Config{
 		TaskID:            v.GetString("task_id"),
 		TaskType:          TaskType(v.GetString("task_type")),
 		JobID:             v.GetString("job_id"),
 		ManagerURL:        v.GetString("manager_url"),
+		ShuffleServiceURL: v.GetString("shuffle_service_url"),
 		MapperPath:        v.GetString("mapper_path"),
 		ReducerPath:       v.GetString("reducer_path"),
+		OutputPath:        v.GetString("output_path"),
 		MinioEndpoint:     v.GetString("minio_endpoint"),
 		MinioAccessKey:    v.GetString("minio_access_key"),
 		MinioSecretKey:    v.GetString("minio_secret_key"),
