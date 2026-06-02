@@ -257,20 +257,47 @@ func (w *worker) runReduce(ctx context.Context) error {
 	defer os.Remove(rawFile)
 
 	for i, loc := range w.cfg.InputLocations {
-		obj, err := w.minio.GetObject(ctx, w.cfg.MinioBucketJobs, loc.Path, minio.GetObjectOptions{})
+		// loc.Path now contains NodeIP:Port of a Shuffle Service
+		w.log.Debug("pulling partition", zap.String("source", loc.Path))
+
+		conn, err := grpc.Dial(loc.Path, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			rf.Close()
-			return fmt.Errorf("get object %s: %w", loc.Path, err)
+			return fmt.Errorf("dial shuffle service %s: %w", loc.Path, err)
 		}
-		if _, err := io.Copy(rf, obj); err != nil {
-			obj.Close()
-			rf.Close()
-			return fmt.Errorf("copy partition %s: %w", loc.Path, err)
-		}
-		obj.Close()
 
-		if (i+1)%100 == 0 {
-			w.log.Info("reduce download progress", zap.Int("partitions_downloaded", i+1))
+		client := shuffle.NewShuffleServiceClient(conn)
+		stream, err := client.Pull(ctx, &shuffle.PullRequest{
+			JobId:        w.cfg.JobID,
+			ReducerIndex: int32(w.cfg.TaskIndex),
+		})
+		if err != nil {
+			conn.Close()
+			rf.Close()
+			return fmt.Errorf("pull from %s: %w", loc.Path, err)
+		}
+
+		for {
+			resp, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				conn.Close()
+				rf.Close()
+				return fmt.Errorf("recv from %s: %w", loc.Path, err)
+			}
+
+			if _, err := rf.Write(resp.Data); err != nil {
+				conn.Close()
+				rf.Close()
+				return fmt.Errorf("write to raw file: %w", err)
+			}
+		}
+		conn.Close()
+
+		if (i+1)%10 == 0 {
+			w.log.Info("reduce pull progress", zap.Int("partitions_pulled", i+1))
 		}
 	}
 	rf.Close()
