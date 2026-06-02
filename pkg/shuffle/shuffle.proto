@@ -1,0 +1,37 @@
+syntax = "proto3";
+package shuffle;
+option go_package = "github.com/mirstar13/go-map-reduce/pkg/shuffle";
+
+service ShuffleService {
+  rpc Push(stream PushRequest) returns (PushResponse);
+  rpc Pull(PullRequest) returns (stream PullResponse);
+  rpc Cleanup(CleanupRequest) returns (CleanupResponse);
+}
+
+message PushRequest {
+  string job_id = 1;
+  int32 task_index = 2;
+  int32 reducer_index = 3;
+  bytes data = 4; // Batch of records
+}
+
+message PushResponse {
+  bool success = 1;
+}
+
+message PullRequest {
+  string job_id = 1;
+  int32 reducer_index = 2;
+}
+
+message PullResponse {
+  bytes data = 1;
+}
+
+message CleanupRequest {
+  string job_id = 1;
+}
+
+message CleanupResponse {
+  bool success = 1;
+}
