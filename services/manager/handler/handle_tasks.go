@@ -13,6 +13,8 @@ import (
 
 	"github.com/mirstar13/go-map-reduce/db"
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
+	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
+	"github.com/mirstar13/go-map-reduce/services/manager/shuffle"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 )
 
@@ -24,21 +26,25 @@ import (
 // Workers call these endpoints after finishing (or failing) a task.
 // The handlers update the DB and notify the owning job's supervisor via the Registry.
 type TaskHandler struct {
-	queries  db.Querier
-	registry *supervisor.Registry
-	minio    *minio.Client
-	cfg      *config.Config
-	log      *zap.Logger
+	queries    db.Querier
+	registry   *supervisor.Registry
+	tracker    *shuffle.Tracker
+	minio      *minio.Client
+	dispatcher interfaces.Dispatcher
+	cfg        *config.Config
+	log        *zap.Logger
 }
 
 // NewTaskHandler creates a TaskHandler.
-func NewTaskHandler(queries db.Querier, registry *supervisor.Registry, minio *minio.Client, cfg *config.Config, log *zap.Logger) *TaskHandler {
+func NewTaskHandler(queries db.Querier, registry *supervisor.Registry, tracker *shuffle.Tracker, minio *minio.Client, dispatcher interfaces.Dispatcher, cfg *config.Config, log *zap.Logger) *TaskHandler {
 	return &TaskHandler{
-		queries:  queries,
-		registry: registry,
-		minio:    minio,
-		cfg:      cfg,
-		log:      log,
+		queries:    queries,
+		registry:   registry,
+		tracker:    tracker,
+		minio:      minio,
+		dispatcher: dispatcher,
+		cfg:        cfg,
+		log:        log,
 	}
 }
 
@@ -46,6 +52,7 @@ func NewTaskHandler(queries db.Querier, registry *supervisor.Registry, minio *mi
 // output_locations is a JSON array: [{"reducer_index":0,"path":"jobs/..."}, ...]
 type mapCompleteRequest struct {
 	OutputLocations json.RawMessage `json:"output_locations"`
+	NodeIP          string          `json:"node_ip"`
 }
 
 // CompleteMapTask handles POST /tasks/map/:id/complete.
@@ -79,6 +86,18 @@ func (h *TaskHandler) CompleteMapTask(c fiber.Ctx) error {
 	}); err != nil {
 		h.log.Error("mark map task completed", zap.String("task_id", taskID.String()), zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not update task"})
+	}
+
+	// Register the node IP for shuffle tracking
+	if req.NodeIP != "" {
+		h.tracker.Register(task.JobID, task.TaskIndex, req.NodeIP)
+	}
+
+	// Delete K8s job on completion to allow for retries or future stages with same name
+	if task.K8sJobName.Valid {
+		if err := h.dispatcher.DeleteJob(c.Context(), task.K8sJobName.String); err != nil {
+			h.log.Warn("could not delete k8s job", zap.String("job_name", task.K8sJobName.String), zap.Error(err))
+		}
 	}
 
 	h.log.Info("map task completed",
@@ -159,6 +178,13 @@ func (h *TaskHandler) CompleteReduceTask(c fiber.Ctx) error {
 	}); err != nil {
 		h.log.Error("mark reduce task completed", zap.Error(err))
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not update task"})
+	}
+
+	// Delete K8s job on completion
+	if task.K8sJobName.Valid {
+		if err := h.dispatcher.DeleteJob(c.Context(), task.K8sJobName.String); err != nil {
+			h.log.Warn("could not delete k8s job", zap.String("job_name", task.K8sJobName.String), zap.Error(err))
+		}
 	}
 
 	h.log.Info("reduce task completed",

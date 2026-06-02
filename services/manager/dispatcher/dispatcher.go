@@ -11,6 +11,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -69,6 +70,7 @@ type ReduceTaskSpec struct {
 	// collected from all completed map tasks for this reducer index.
 	InputLocations json.RawMessage
 	OutputBucket   string
+	OutputPath     string
 }
 
 // DispatchMap creates a Kubernetes Job for a map worker.
@@ -118,9 +120,10 @@ func (d *Dispatcher) DispatchReduce(ctx context.Context, spec ReduceTaskSpec) (s
 		{Name: "MANAGER_URL", Value: d.cfg.ManagerURL},
 		{Name: "REDUCER_PATH", Value: spec.ReducerPath},
 		{Name: "INPUT_LOCATIONS", Value: string(spec.InputLocations)},
+		{Name: "OUTPUT_PATH", Value: spec.OutputPath},
 		{Name: "MINIO_BUCKET_CODE", Value: d.cfg.MinioBucketCode},
 		{Name: "MINIO_BUCKET_JOBS", Value: d.cfg.MinioBucketJobs},
-		{Name: "MINIO_BUCKET_OUTPUT", Value: d.cfg.MinioBucketOutput},
+		{Name: "MINIO_BUCKET_OUTPUT", Value: spec.OutputBucket},
 		d.minioEndpointVar(),
 		d.minioAccessKeyVar(),
 		d.minioSecretKeyVar(),
@@ -169,11 +172,10 @@ func (d *Dispatcher) DispatchBuild(ctx context.Context, spec BuildTaskSpec) (str
 // DeleteJob removes a Kubernetes Job and its pods (background propagation).
 // Safe to call even if the job no longer exists.
 func (d *Dispatcher) DeleteJob(ctx context.Context, jobName string) error {
-	propagation := metav1.DeletePropagationBackground
 	err := d.k8s.BatchV1().Jobs(d.cfg.WorkerNamespace).Delete(ctx, jobName, metav1.DeleteOptions{
-		PropagationPolicy: &propagation,
+		PropagationPolicy: ptr(metav1.DeletePropagationBackground),
 	})
-	if err != nil && !isNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("dispatcher: delete k8s job %s: %w", jobName, err)
 	}
 	return nil
@@ -272,13 +274,15 @@ func (d *Dispatcher) createK8sJob(ctx context.Context, name string, env []corev1
 }
 
 // k8sJobName produces a valid Kubernetes name (≤63 chars).
-// Format: {prefix}-{taskID[:8]}-{index}
-func k8sJobName(prefix, taskID string, index int) string {
-	short := taskID
-	if len(short) > 8 {
-		short = short[:8]
+// Format: {prefix}-{taskID[:8]}-{index}-{timestamp}
+func k8sJobName(pfx, id string, idx int) string {
+	shortID := id
+	if len(id) > 8 {
+		shortID = id[:8]
 	}
-	return fmt.Sprintf("%s-%s-%d", prefix, short, index)
+	// Add timestamp to ensure uniqueness across retries
+	ts := time.Now().Unix() % 1000000
+	return fmt.Sprintf("%s-%s-%d-%d", pfx, shortID, idx, ts)
 }
 
 // minioEndpointVar, minioAccessKeyVar, minioSecretKeyVar inject MinIO credentials
@@ -309,23 +313,6 @@ func (d *Dispatcher) minioSecretKeyVar() corev1.EnvVar {
 	}
 }
 
-// isNotFound checks if a Kubernetes API error is a 404.
-func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	return err.Error() != "" && (contains(err.Error(), "not found") || contains(err.Error(), "404"))
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
-}
-
-func containsStr(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+func ptr[T any](v T) *T {
+	return &v
 }

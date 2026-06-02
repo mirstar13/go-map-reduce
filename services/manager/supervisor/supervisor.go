@@ -17,6 +17,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
 	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
 	interfaces "github.com/mirstar13/go-map-reduce/services/manager/interface"
+	"github.com/mirstar13/go-map-reduce/services/manager/shuffle"
 )
 
 // Registry keeps track of all running job supervisors on this replica.
@@ -71,6 +72,7 @@ type Supervisor struct {
 	cfg        *config.Config
 	log        *zap.Logger
 	registry   *Registry
+	tracker    *shuffle.Tracker
 
 	// notify is poked by task-callback handlers for an immediate state re-eval.
 	notify chan struct{}
@@ -88,6 +90,7 @@ func New(
 	cfg *config.Config,
 	log *zap.Logger,
 	registry *Registry,
+	tracker *shuffle.Tracker,
 	onTerminal func(context.Context, uuid.UUID),
 ) *Supervisor {
 	return &Supervisor{
@@ -100,6 +103,7 @@ func New(
 		cfg:        cfg,
 		log:        log.With(zap.String("job_id", job.JobID.String())),
 		registry:   registry,
+		tracker:    tracker,
 		notify:     make(chan struct{}, 1),
 		onTerminal: onTerminal,
 	}
@@ -354,6 +358,7 @@ func (s *Supervisor) dispatchPendingMapTasks(ctx context.Context) error {
 			InputLength: task.InputLength,
 			MapperPath:  s.job.MapperPath,
 			NumReducers: int(s.job.NumReducers),
+			InputBucket: s.job.InputBucket,
 		})
 		if err != nil {
 			s.log.Error("dispatch map task", zap.String("task_id", task.TaskID.String()), zap.Error(err))
@@ -419,26 +424,18 @@ func (s *Supervisor) checkReducePhase(ctx context.Context) error {
 			if task.Status != "COMPLETED" && task.Status != "FAILED" && task.RetryCount < int32(s.cfg.TaskMaxRetries) {
 				s.log.Info("dispatching backup reduce task for straggler", zap.Int32("index", task.TaskIndex))
 				
-				// Re-query map output locations for this reducer index
-				mapOutputs, _ := s.queries.GetMapTaskOutputLocations(ctx, s.jobID)
+				// Get source nodes from shuffle tracker
+				sourceNodes := s.tracker.GetSourceNodes(s.jobID)
 				type loc struct {
 					ReducerIndex int    `json:"reducer_index"`
 					Path         string `json:"path"`
 				}
 				var inputLocs []loc
-				for _, mo := range mapOutputs {
-					if !mo.OutputLocations.Valid {
-						continue
-					}
-					var files []loc
-					if err := json.Unmarshal(mo.OutputLocations.RawMessage, &files); err != nil {
-						continue
-					}
-					for _, f := range files {
-						if f.ReducerIndex == int(task.TaskIndex) {
-							inputLocs = append(inputLocs, f)
-						}
-					}
+				for _, nodeIP := range sourceNodes {
+					inputLocs = append(inputLocs, loc{
+						ReducerIndex: int(task.TaskIndex),
+						Path:         fmt.Sprintf("%s:50051", nodeIP),
+					})
 				}
 				locsJSON, _ := json.Marshal(inputLocs)
 
@@ -448,7 +445,8 @@ func (s *Supervisor) checkReducePhase(ctx context.Context) error {
 					TaskIndex:      int(task.TaskIndex),
 					ReducerPath:    s.job.ReducerPath,
 					InputLocations: json.RawMessage(locsJSON),
-					InputBucket: s.job.InputBucket,
+					OutputBucket:   s.job.OutputBucket,
+					OutputPath:     s.job.OutputPath,
 				})
 			}
 		}
@@ -487,26 +485,18 @@ func (s *Supervisor) dispatchPendingReduceTasks(ctx context.Context) error {
 			continue
 		}
 
-		// Re-query map output locations for this reducer index so retries work.
-		mapOutputs, _ := s.queries.GetMapTaskOutputLocations(ctx, s.jobID)
+		// Get source nodes from shuffle tracker
+		sourceNodes := s.tracker.GetSourceNodes(s.jobID)
 		type loc struct {
 			ReducerIndex int    `json:"reducer_index"`
 			Path         string `json:"path"`
 		}
 		var inputLocs []loc
-		for _, mo := range mapOutputs {
-			if !mo.OutputLocations.Valid {
-				continue
-			}
-			var files []loc
-			if err := json.Unmarshal(mo.OutputLocations.RawMessage, &files); err != nil {
-				continue
-			}
-			for _, f := range files {
-				if f.ReducerIndex == int(task.TaskIndex) {
-					inputLocs = append(inputLocs, f)
-				}
-			}
+		for _, nodeIP := range sourceNodes {
+			inputLocs = append(inputLocs, loc{
+				ReducerIndex: int(task.TaskIndex),
+				Path:         fmt.Sprintf("%s:50051", nodeIP),
+			})
 		}
 		locsJSON, _ := json.Marshal(inputLocs)
 
@@ -517,7 +507,8 @@ func (s *Supervisor) dispatchPendingReduceTasks(ctx context.Context) error {
 			ReducerPath:    s.job.ReducerPath,
 			InputLocations: json.RawMessage(locsJSON),
 			OutputBucket:   s.job.OutputBucket,
-			})
+			OutputPath:     s.job.OutputPath,
+		})
 		if err != nil {
 			s.log.Error("dispatch reduce task", zap.String("task_id", task.TaskID.String()), zap.Error(err))
 			continue

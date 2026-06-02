@@ -25,7 +25,7 @@ import (
 func newTaskApp(t *testing.T, q db.Querier) *fiber.App {
 	t.Helper()
 	reg := supervisor.NewRegistry()
-	h := NewTaskHandler(q, reg, nil, nil, zap.NewNop())
+	h := NewTaskHandler(q, reg, nil, nil, nil, zap.NewNop())
 	app := fiber.New()
 	app.Post("/tasks/map/:id/complete", h.CompleteMapTask)
 	app.Post("/tasks/map/:id/fail", h.FailMapTask)
@@ -40,7 +40,7 @@ func newTaskApp(t *testing.T, q db.Querier) *fiber.App {
 // allowing tests that verify Notify is called.
 func newTaskAppWithRegistry(t *testing.T, q db.Querier, reg *supervisor.Registry) *fiber.App {
 	t.Helper()
-	h := NewTaskHandler(q, reg, nil, nil, zap.NewNop())
+	h := NewTaskHandler(q, reg, nil, nil, nil, zap.NewNop())
 	app := fiber.New()
 	app.Post("/tasks/map/:id/complete", h.CompleteMapTask)
 	app.Post("/tasks/map/:id/fail", h.FailMapTask)

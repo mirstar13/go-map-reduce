@@ -23,6 +23,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/services/manager/config"
 	"github.com/mirstar13/go-map-reduce/services/manager/dispatcher"
 	"github.com/mirstar13/go-map-reduce/services/manager/handler"
+	"github.com/mirstar13/go-map-reduce/services/manager/shuffle"
 	"github.com/mirstar13/go-map-reduce/services/manager/splitter"
 	"github.com/mirstar13/go-map-reduce/services/manager/supervisor"
 	"github.com/mirstar13/go-map-reduce/services/manager/watchdog"
@@ -30,7 +31,7 @@ import (
 )
 
 func main() {
-	fmt.Println("MANAGER VERSION: DAG-v1")
+	fmt.Println("MANAGER VERSION: DAG-v3")
 	log, err := zap.NewProduction()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to build logger: %v\n", err)
@@ -75,6 +76,7 @@ func main() {
 	}
 
 	registry := supervisor.NewRegistry()
+	tracker := shuffle.NewTracker()
 
 	rootCtx, rootCancel := context.WithCancel(context.Background())
 	defer rootCancel()
@@ -87,7 +89,7 @@ func main() {
 
 	// Called from the job handler (new job) and from startup recovery.
 	launchSupervisor = func(job db.Job) {
-		sup := supervisor.New(job, queries, spl, disp, minioClient, cfg, log, registry, func(ctx context.Context, jobID uuid.UUID) {
+		sup := supervisor.New(job, queries, spl, disp, minioClient, cfg, log, registry, tracker, func(ctx context.Context, jobID uuid.UUID) {
 			_ = workflowController.HandleJobTerminal(ctx, jobID)
 		})
 		go sup.Run(rootCtx)
@@ -109,7 +111,7 @@ func main() {
 	go wd.Run(rootCtx)
 
 	jobHandler := handler.NewJobHandler(queries, registry, spl, disp, cfg, log, launchSupervisor)
-	taskHandler := handler.NewTaskHandler(queries, registry, minioClient, cfg, log)
+	taskHandler := handler.NewTaskHandler(queries, registry, tracker, minioClient, disp, cfg, log)
 	workflowHandler := handler.NewWorkflowHandler(queries, cfg, log, launchSupervisor)
 
 	app := fiber.New(fiber.Config{

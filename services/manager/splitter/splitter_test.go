@@ -112,7 +112,7 @@ func TestSplitter_Compute(t *testing.T) {
 			s, err := New(cfg)
 			must.NoError(err)
 
-			splits, err := s.Compute(context.Background(), "test-file", tt.numSplits)
+			splits, err := s.Compute(context.Background(), cfg.MinioBucketInput, "test-file", tt.numSplits)
 			
 			// We handle the case where Compute might return an error due to no newlines to EOF
 			if tt.name == "file without newlines avoids panic" {

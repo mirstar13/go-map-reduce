@@ -27,20 +27,20 @@ import (
 
 // mockSplitter satisfies the Splitter interface.
 type mockSplitter struct {
-	computeFn func(ctx context.Context, objectKey string, numSplits int) ([]splitter.Split, error)
-	getSizeFn func(ctx context.Context, objectKey string) (int64, error)
+	computeFn func(ctx context.Context, bucket string, objectKey string, numSplits int) ([]splitter.Split, error)
+	getSizeFn func(ctx context.Context, bucket string, objectKey string) (int64, error)
 }
 
-func (m *mockSplitter) Compute(ctx context.Context, key string, n int) ([]splitter.Split, error) {
+func (m *mockSplitter) Compute(ctx context.Context, bucket string, key string, n int) ([]splitter.Split, error) {
 	if m.computeFn != nil {
-		return m.computeFn(ctx, key, n)
+		return m.computeFn(ctx, bucket, key, n)
 	}
 	panic("mockSplitter.Compute: not implemented")
 }
 
-func (m *mockSplitter) GetSize(ctx context.Context, key string) (int64, error) {
+func (m *mockSplitter) GetSize(ctx context.Context, bucket string, key string) (int64, error) {
 	if m.getSizeFn != nil {
-		return m.getSizeFn(ctx, key)
+		return m.getSizeFn(ctx, bucket, key)
 	}
 	return 0, nil
 }
@@ -127,6 +127,99 @@ type mockQuerier struct {
 	updateJobStatusFn             func(ctx context.Context, arg db.UpdateJobStatusParams) error
 	updatePluginLastUsedFn        func(ctx context.Context, sourceHash string) error
 	upsertCachedPluginFn          func(ctx context.Context, arg db.UpsertCachedPluginParams) error
+
+	addWorkflowDependencyFn           func(ctx context.Context, arg db.AddWorkflowDependencyParams) error
+	checkStageDependenciesFn          func(ctx context.Context, arg db.CheckStageDependenciesParams) (int64, error)
+	createWorkflowFn                  func(ctx context.Context, arg db.CreateWorkflowParams) (db.Workflow, error)
+	getDownstreamStagesFn             func(ctx context.Context, arg db.GetDownstreamStagesParams) ([]string, error)
+	getWorkflowFn                     func(ctx context.Context, workflowID uuid.UUID) (db.Workflow, error)
+	getWorkflowStagesFn               func(ctx context.Context, workflowID uuid.NullUUID) ([]db.Job, error)
+	updateWorkflowStatusFn            func(ctx context.Context, arg db.UpdateWorkflowStatusParams) (db.Workflow, error)
+	getCompletedWorkflowStagesCountFn func(ctx context.Context, workflowID uuid.NullUUID) (int64, error)
+	getJobByWorkflowStageFn           func(ctx context.Context, arg db.GetJobByWorkflowStageParams) (db.Job, error)
+	getParentsOutputPathsFn           func(ctx context.Context, arg db.GetParentsOutputPathsParams) ([]string, error)
+	getWorkflowStatusFn               func(ctx context.Context, workflowID uuid.UUID) (string, error)
+	updateJobInputAndStatusFn         func(ctx context.Context, arg db.UpdateJobInputAndStatusParams) error
+	getWorkflowDependenciesFn         func(ctx context.Context, workflowID uuid.UUID) ([]db.GetWorkflowDependenciesRow, error)
+}
+
+func (m *mockQuerier) AddWorkflowDependency(ctx context.Context, arg db.AddWorkflowDependencyParams) error {
+	if m.addWorkflowDependencyFn != nil {
+		return m.addWorkflowDependencyFn(ctx, arg)
+	}
+	return nil
+}
+func (m *mockQuerier) CheckStageDependencies(ctx context.Context, arg db.CheckStageDependenciesParams) (int64, error) {
+	if m.checkStageDependenciesFn != nil {
+		return m.checkStageDependenciesFn(ctx, arg)
+	}
+	return 0, nil
+}
+func (m *mockQuerier) CreateWorkflow(ctx context.Context, arg db.CreateWorkflowParams) (db.Workflow, error) {
+	if m.createWorkflowFn != nil {
+		return m.createWorkflowFn(ctx, arg)
+	}
+	return db.Workflow{}, nil
+}
+func (m *mockQuerier) GetDownstreamStages(ctx context.Context, arg db.GetDownstreamStagesParams) ([]string, error) {
+	if m.getDownstreamStagesFn != nil {
+		return m.getDownstreamStagesFn(ctx, arg)
+	}
+	return nil, nil
+}
+func (m *mockQuerier) GetWorkflow(ctx context.Context, workflowID uuid.UUID) (db.Workflow, error) {
+	if m.getWorkflowFn != nil {
+		return m.getWorkflowFn(ctx, workflowID)
+	}
+	return db.Workflow{}, nil
+}
+func (m *mockQuerier) GetWorkflowStages(ctx context.Context, workflowID uuid.NullUUID) ([]db.Job, error) {
+	if m.getWorkflowStagesFn != nil {
+		return m.getWorkflowStagesFn(ctx, workflowID)
+	}
+	return nil, nil
+}
+func (m *mockQuerier) UpdateWorkflowStatus(ctx context.Context, arg db.UpdateWorkflowStatusParams) (db.Workflow, error) {
+	if m.updateWorkflowStatusFn != nil {
+		return m.updateWorkflowStatusFn(ctx, arg)
+	}
+	return db.Workflow{}, nil
+}
+func (m *mockQuerier) GetCompletedWorkflowStagesCount(ctx context.Context, workflowID uuid.NullUUID) (int64, error) {
+	if m.getCompletedWorkflowStagesCountFn != nil {
+		return m.getCompletedWorkflowStagesCountFn(ctx, workflowID)
+	}
+	return 0, nil
+}
+func (m *mockQuerier) GetJobByWorkflowStage(ctx context.Context, arg db.GetJobByWorkflowStageParams) (db.Job, error) {
+	if m.getJobByWorkflowStageFn != nil {
+		return m.getJobByWorkflowStageFn(ctx, arg)
+	}
+	return db.Job{}, nil
+}
+func (m *mockQuerier) GetParentsOutputPaths(ctx context.Context, arg db.GetParentsOutputPathsParams) ([]string, error) {
+	if m.getParentsOutputPathsFn != nil {
+		return m.getParentsOutputPathsFn(ctx, arg)
+	}
+	return nil, nil
+}
+func (m *mockQuerier) GetWorkflowStatus(ctx context.Context, workflowID uuid.UUID) (string, error) {
+	if m.getWorkflowStatusFn != nil {
+		return m.getWorkflowStatusFn(ctx, workflowID)
+	}
+	return "RUNNING", nil
+}
+func (m *mockQuerier) UpdateJobInputAndStatus(ctx context.Context, arg db.UpdateJobInputAndStatusParams) error {
+	if m.updateJobInputAndStatusFn != nil {
+		return m.updateJobInputAndStatusFn(ctx, arg)
+	}
+	return nil
+}
+func (m *mockQuerier) GetWorkflowDependencies(ctx context.Context, workflowID uuid.UUID) ([]db.GetWorkflowDependenciesRow, error) {
+	if m.getWorkflowDependenciesFn != nil {
+		return m.getWorkflowDependenciesFn(ctx, workflowID)
+	}
+	return nil, nil
 }
 
 var _ db.Querier = (*mockQuerier)(nil)
@@ -400,7 +493,7 @@ var testCfg = &config.Config{
 func newSupervisor(job db.Job, q db.Querier, spl interfaces.Splitter, disp interfaces.Dispatcher) *Supervisor {
 	reg := NewRegistry()
 	log, _ := zap.NewDevelopment()
-	return New(job, q, spl, disp, nil, testCfg, log, reg)
+	return New(job, q, spl, disp, nil, testCfg, log, reg, nil)
 }
 
 func baseJob(status string) db.Job {
@@ -523,7 +616,7 @@ func TestDoSplit_Success_CreatesTasksAndDispatchesThem(t *testing.T) {
 	}
 
 	spl := &mockSplitter{
-		computeFn: func(_ context.Context, key string, n int) ([]splitter.Split, error) {
+		computeFn: func(_ context.Context, bucket string, key string, n int) ([]splitter.Split, error) {
 			assert.Equal(t, job.InputPath, key)
 			assert.Equal(t, int(job.NumMappers), n)
 			return splits, nil
@@ -566,7 +659,7 @@ func TestDoSplit_SplitterFails_FailsJob(t *testing.T) {
 	}
 
 	spl := &mockSplitter{
-		computeFn: func(_ context.Context, _ string, _ int) ([]splitter.Split, error) {
+		computeFn: func(_ context.Context, _ string, _ string, _ int) ([]splitter.Split, error) {
 			return nil, errors.New("minio: connection refused")
 		},
 	}
@@ -596,7 +689,7 @@ func TestDoSplit_CreateMapTaskFails_FailsJob(t *testing.T) {
 	}
 
 	spl := &mockSplitter{
-		computeFn: func(_ context.Context, _ string, _ int) ([]splitter.Split, error) {
+		computeFn: func(_ context.Context, _ string, _ string, _ int) ([]splitter.Split, error) {
 			return splits, nil
 		},
 	}
@@ -1111,7 +1204,7 @@ func TestRun_RegistersAndDeregistersFromRegistry(t *testing.T) {
 		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) { return job, nil },
 	}
 
-	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg)
+	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1152,7 +1245,7 @@ func TestRun_NotifyChannel_TriggersStep(t *testing.T) {
 	}
 
 	reg := NewRegistry()
-	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg)
+	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1276,7 +1369,7 @@ func TestCheckBuildPhase_BuildCompleted_TransitionsToSplit(t *testing.T) {
 	}
 
 	spl := &mockSplitter{
-		computeFn: func(_ context.Context, key string, n int) ([]splitter.Split, error) {
+		computeFn: func(_ context.Context, _ string, key string, n int) ([]splitter.Split, error) {
 			return []splitter.Split{}, nil
 		},
 	}
@@ -1313,7 +1406,7 @@ func TestDoBuild_NoBuildNeeded_SkipsToSplit(t *testing.T) {
 	}
 
 	spl := &mockSplitter{
-		computeFn: func(_ context.Context, key string, n int) ([]splitter.Split, error) {
+		computeFn: func(_ context.Context, _ string, key string, n int) ([]splitter.Split, error) {
 			return []splitter.Split{}, nil
 		},
 	}
@@ -1358,7 +1451,7 @@ func TestDoBuild_CacheHit_SkipsBuild(t *testing.T) {
 	}
 
 	spl := &mockSplitter{
-		computeFn: func(_ context.Context, key string, n int) ([]splitter.Split, error) {
+		computeFn: func(_ context.Context, _ string, key string, n int) ([]splitter.Split, error) {
 			return []splitter.Split{}, nil
 		},
 	}

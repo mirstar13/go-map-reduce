@@ -102,7 +102,7 @@ func (h *JobHandler) SubmitJob(c fiber.Ctx) error {
 		var size int64
 		var err error
 		if h.splitter != nil {
-			size, err = h.splitter.GetSize(c.Context(), req.InputPath)
+			size, err = h.splitter.GetSize(c.Context(), h.cfg.MinioBucketInput, req.InputPath)
 		} else {
 			err = fmt.Errorf("splitter not available")
 		}
@@ -145,7 +145,7 @@ func (h *JobHandler) SubmitJob(c fiber.Ctx) error {
 		req.InputFormat = "jsonl"
 	}
 
-	outputPath := fmt.Sprintf("output/jobs/%s", uuid.New().String())
+	outputPath := fmt.Sprintf("jobs/%s", uuid.New().String())
 
 	job, err := h.queries.CreateJob(c.Context(), db.CreateJobParams{
 		OwnerUserID:  id.Subject,

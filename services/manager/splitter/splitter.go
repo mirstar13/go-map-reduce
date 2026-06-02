@@ -97,8 +97,8 @@ func (s *Splitter) Compute(ctx context.Context, bucket string, inputPath string,
 
 	// 2. Compute splits
 	targetSplitSize := totalSize / int64(numSplits)
-	if targetSplitSize < 1024*1024 { // Minimum 1MB split unless data is very small
-		targetSplitSize = 1024 * 1024
+	if targetSplitSize < 1 { // Minimum 1 byte split
+		targetSplitSize = 1
 	}
 
 	var splits []Split

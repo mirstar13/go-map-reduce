@@ -76,7 +76,7 @@ func TestDispatcher_DispatchMap(t *testing.T) {
 
 	jobName, err := d.DispatchMap(context.Background(), spec)
 	must.NoError(err)
-	is.Equal("map-task-123-2", jobName)
+	is.Contains(jobName, "map-task-123-2")
 
 	must.NotNil(createdJob)
 
@@ -161,7 +161,7 @@ func TestDispatcher_DispatchReduce(t *testing.T) {
 
 	jobName, err := d.DispatchReduce(context.Background(), spec)
 	must.NoError(err)
-	is.Equal("red-task-876-1", jobName)
+	is.Contains(jobName, "red-task-876-1")
 
 	must.NotNil(createdJob)
 

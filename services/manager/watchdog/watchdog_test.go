@@ -80,6 +80,45 @@ func (m *mockQuerier) UpdatePluginLastUsed(context.Context, string) error {
 func (m *mockQuerier) ListStalePlugins(context.Context, sql.NullString) ([]db.PluginCache, error) {
 	return nil, nil
 }
+func (m *mockQuerier) AddWorkflowDependency(context.Context, db.AddWorkflowDependencyParams) error {
+	return nil
+}
+func (m *mockQuerier) CheckStageDependencies(context.Context, db.CheckStageDependenciesParams) (int64, error) {
+	return 0, nil
+}
+func (m *mockQuerier) CreateWorkflow(context.Context, db.CreateWorkflowParams) (db.Workflow, error) {
+	return db.Workflow{}, nil
+}
+func (m *mockQuerier) GetDownstreamStages(context.Context, db.GetDownstreamStagesParams) ([]string, error) {
+	return nil, nil
+}
+func (m *mockQuerier) GetWorkflow(context.Context, uuid.UUID) (db.Workflow, error) {
+	return db.Workflow{}, nil
+}
+func (m *mockQuerier) GetWorkflowStages(context.Context, uuid.NullUUID) ([]db.Job, error) {
+	return nil, nil
+}
+func (m *mockQuerier) UpdateWorkflowStatus(context.Context, db.UpdateWorkflowStatusParams) (db.Workflow, error) {
+	return db.Workflow{}, nil
+}
+func (m *mockQuerier) GetCompletedWorkflowStagesCount(context.Context, uuid.NullUUID) (int64, error) {
+	return 0, nil
+}
+func (m *mockQuerier) GetJobByWorkflowStage(context.Context, db.GetJobByWorkflowStageParams) (db.Job, error) {
+	return db.Job{}, nil
+}
+func (m *mockQuerier) GetParentsOutputPaths(context.Context, db.GetParentsOutputPathsParams) ([]string, error) {
+	return nil, nil
+}
+func (m *mockQuerier) GetWorkflowStatus(context.Context, uuid.UUID) (string, error) {
+	return "RUNNING", nil
+}
+func (m *mockQuerier) UpdateJobInputAndStatus(context.Context, db.UpdateJobInputAndStatusParams) error {
+	return nil
+}
+func (m *mockQuerier) GetWorkflowDependencies(context.Context, uuid.UUID) ([]db.GetWorkflowDependenciesRow, error) {
+	return nil, nil
+}
 
 // --- stubs for the remaining Querier methods (never called by Watchdog) ---
 func (m *mockQuerier) CancelJob(ctx context.Context, jobID uuid.UUID) error {

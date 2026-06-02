@@ -98,7 +98,7 @@ func (h *WorkflowHandler) SubmitWorkflow(c fiber.Ctx) error {
 		}
 
 		// Calculate output path for this stage
-		outputPath := fmt.Sprintf("output/workflows/%s/%s", wf.WorkflowID, name)
+		outputPath := fmt.Sprintf("workflows/%s/%s", wf.WorkflowID, name)
 
 		job, err := h.queries.CreateJob(c.Context(), db.CreateJobParams{
 			OwnerUserID:  id.Subject,
@@ -112,6 +112,8 @@ func (h *WorkflowHandler) SubmitWorkflow(c fiber.Ctx) error {
 			InputFormat:  stageSpec.InputFormat,
 			WorkflowID:   uuid.NullUUID{UUID: wf.WorkflowID, Valid: true},
 			StageName:    sql.NullString{String: name, Valid: true},
+			InputBucket:  h.cfg.MinioBucketInput,
+			OutputBucket: h.cfg.MinioBucketOutput,
 		})
 		if err != nil {
 			h.log.Error("failed to create job for workflow stage", zap.String("stage", name), zap.Error(err))

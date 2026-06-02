@@ -146,11 +146,16 @@ func (c *Controller) maybeLaunchStage(ctx context.Context, workflowID uuid.UUID,
 		return nil // Already running or finished
 	}
 
-	// Update the job with the aggregated input path and mark it SUBMITTED
+	// For a downstream stage, the input bucket is always the output bucket of its parents.
+	// We assume all parents write to the same output bucket (which is standard).
+	// We need to update input_path, status, AND input_bucket.
+	parentOutputBucket := existingJob.OutputBucket
+
 	if err := c.queries.UpdateJobInputAndStatus(ctx, db.UpdateJobInputAndStatusParams{
-		JobID:     existingJob.JobID,
-		InputPath: inputPath,
-		Status:    "SUBMITTED",
+		JobID:        existingJob.JobID,
+		InputPath:    inputPath,
+		InputBucket:  parentOutputBucket,
+		Status:       "SUBMITTED",
 	}); err != nil {
 		return fmt.Errorf("update stage job: %w", err)
 	}
