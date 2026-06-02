@@ -1,26 +1,38 @@
 package main
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/mirstar13/go-map-reduce/cmd/cli/client"
 	"github.com/mirstar13/go-map-reduce/db"
+	"github.com/mirstar13/go-map-reduce/services/ui/metrics"
 	"github.com/stretchr/testify/assert"
 )
 
+type mockMetricsClient struct{}
+
+func (m *mockMetricsClient) GetClusterMetrics(ctx context.Context) (metrics.ClusterMetrics, error) {
+	return metrics.ClusterMetrics{}, nil
+}
+
 func TestInitialModel(t *testing.T) {
 	c := client.New("http://localhost:8080", "test-token")
-	m := initialModel(c)
+	mc := &mockMetricsClient{}
+	m := initialModel(c, mc)
 	assert.Equal(t, 0, len(m.jobs))
 	assert.False(t, m.quitting)
 	assert.NotNil(t, m.client)
-	assert.Equal(t, jobsPanel, m.focused)
+	assert.NotNil(t, m.MetricsClient) 
+	assert.Equal(t, globalStatusPanel, m.focused) 
 }
 
 func TestUpdateJobs(t *testing.T) {
 	c := client.New("http://localhost:8080", "test-token")
-	m := initialModel(c)
+	mc := &mockMetricsClient{}
+	m := initialModel(c, mc)
+
 
 	jobID := uuid.New()
 	jobs := []db.Job{

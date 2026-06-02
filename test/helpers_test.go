@@ -46,7 +46,7 @@ func compilePlugin(t *testing.T, name string, source string) string {
 		"CGO_ENABLED=0",
 	)
 	// Run build from project root so imports resolve
-	cmd.Dir = ".." 
+	cmd.Dir = ".."
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "compile %s failed: %s", name, string(out))

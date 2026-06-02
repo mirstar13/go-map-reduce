@@ -42,15 +42,21 @@ func TestGraph_PageRankIteration(t *testing.T) {
 
 	// 4. Upload files
 	t.Log("Uploading files...")
-	var inputUploadResp struct{ Path string `json:"path"` }
+	var inputUploadResp struct {
+		Path string `json:"path"`
+	}
 	err = authClient.UploadFile("/files/input", inputPath, &inputUploadResp)
 	require.NoError(t, err)
 
-	var mapperUploadResp struct{ Path string `json:"path"` }
+	var mapperUploadResp struct {
+		Path string `json:"path"`
+	}
 	err = authClient.UploadFile("/files/code", mapperBin, &mapperUploadResp)
 	require.NoError(t, err)
 
-	var reducerUploadResp struct{ Path string `json:"path"` }
+	var reducerUploadResp struct {
+		Path string `json:"path"`
+	}
 	err = authClient.UploadFile("/files/code", reducerBin, &reducerUploadResp)
 	require.NoError(t, err)
 
@@ -64,7 +70,9 @@ func TestGraph_PageRankIteration(t *testing.T) {
 		"num_reducers": 1,
 		"input_format": "text",
 	}
-	var jobResp struct{ JobID string `json:"job_id"` }
+	var jobResp struct {
+		JobID string `json:"job_id"`
+	}
 	err = authClient.Post("/jobs", submitReq, &jobResp)
 	require.NoError(t, err)
 	jobID := jobResp.JobID
@@ -102,7 +110,9 @@ func TestGraph_Preprocessor(t *testing.T) {
 	uiURL, username, password := requireE2E(t)
 
 	c := client.NewInsecure(uiURL, "")
-	var loginResp struct{ AccessToken string `json:"access_token"` }
+	var loginResp struct {
+		AccessToken string `json:"access_token"`
+	}
 	_ = c.PostNoAuth("/auth/login", map[string]string{"username": username, "password": password}, &loginResp)
 	authClient := client.NewInsecure(uiURL, loginResp.AccessToken)
 
@@ -117,11 +127,17 @@ func TestGraph_Preprocessor(t *testing.T) {
 	reducerBin := compileExamplePlugin(t, "prep-reducer", "../examples/graph/preprocessor/reducer.go", false)
 
 	// 3. Upload and Submit
-	var inputUploadResp struct{ Path string `json:"path"` }
+	var inputUploadResp struct {
+		Path string `json:"path"`
+	}
 	_ = authClient.UploadFile("/files/input", inputPath, &inputUploadResp)
-	var mapperUploadResp struct{ Path string `json:"path"` }
+	var mapperUploadResp struct {
+		Path string `json:"path"`
+	}
 	_ = authClient.UploadFile("/files/code", mapperBin, &mapperUploadResp)
-	var reducerUploadResp struct{ Path string `json:"path"` }
+	var reducerUploadResp struct {
+		Path string `json:"path"`
+	}
 	_ = authClient.UploadFile("/files/code", reducerBin, &reducerUploadResp)
 
 	submitReq := map[string]any{
@@ -132,7 +148,9 @@ func TestGraph_Preprocessor(t *testing.T) {
 		"num_reducers": 1,
 		"input_format": "text",
 	}
-	var jobResp struct{ JobID string `json:"job_id"` }
+	var jobResp struct {
+		JobID string `json:"job_id"`
+	}
 	err = authClient.Post("/jobs", submitReq, &jobResp)
 	require.NoError(t, err)
 	jobID := jobResp.JobID

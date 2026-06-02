@@ -132,7 +132,7 @@ func main() {
 	err = authClient.Post("/jobs", submitReq, &jobResp)
 	require.NoError(t, err, "submit job")
 	require.NotEmpty(t, jobResp.JobID)
-	
+
 	jobID := jobResp.JobID
 	t.Logf("Job submitted successfully with ID: %s", jobID)
 
@@ -144,10 +144,10 @@ func main() {
 		var getResp map[string]any
 		err = authClient.Get("/jobs/"+jobID, &getResp)
 		require.NoError(t, err, "get job status")
-		
+
 		status := getResp["status"].(string)
 		t.Logf("Job status: %s", status)
-		
+
 		if status == "COMPLETED" {
 			jobCompleted = true
 			break

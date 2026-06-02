@@ -48,11 +48,11 @@ func main() {
 func compileExamplePlugin(t *testing.T, name string, sourcePath string, isMapper bool) string {
 	t.Helper()
 	tmpDir := t.TempDir()
-	
+
 	// Copy the original source
 	srcContent, err := os.ReadFile(sourcePath)
 	require.NoError(t, err)
-	
+
 	pluginSrcPath := filepath.Join(tmpDir, "plugin.go")
 	err = os.WriteFile(pluginSrcPath, srcContent, 0644)
 	require.NoError(t, err)
@@ -76,7 +76,7 @@ func compileExamplePlugin(t *testing.T, name string, sourcePath string, isMapper
 		"GOARCH=amd64",
 		"CGO_ENABLED=0",
 	)
-	cmd.Dir = ".." 
+	cmd.Dir = ".."
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "compile %s failed: %s", name, string(out))
@@ -97,7 +97,7 @@ func runExampleTest(t *testing.T, exampleName string, inputFileName string, inpu
 		"password": password,
 	}, &loginResp)
 	require.NoError(t, err, "login should succeed")
-	
+
 	// Small sleep to avoid "token used before issued" error if cluster clock is slightly behind
 	time.Sleep(5 * time.Second)
 
@@ -111,15 +111,21 @@ func runExampleTest(t *testing.T, exampleName string, inputFileName string, inpu
 
 	// 3. Upload files
 	t.Log("Uploading files...")
-	var inputUploadResp struct{ Path string `json:"path"` }
+	var inputUploadResp struct {
+		Path string `json:"path"`
+	}
 	err = authClient.UploadFile("/files/input", filepath.Join(exampleDir, inputFileName), &inputUploadResp)
 	require.NoError(t, err, "upload input data")
 
-	var mapperUploadResp struct{ Path string `json:"path"` }
+	var mapperUploadResp struct {
+		Path string `json:"path"`
+	}
 	err = authClient.UploadFile("/files/code", mapperBin, &mapperUploadResp)
 	require.NoError(t, err, "upload mapper binary")
 
-	var reducerUploadResp struct{ Path string `json:"path"` }
+	var reducerUploadResp struct {
+		Path string `json:"path"`
+	}
 	err = authClient.UploadFile("/files/code", reducerBin, &reducerUploadResp)
 	require.NoError(t, err, "upload reducer binary")
 
@@ -133,7 +139,9 @@ func runExampleTest(t *testing.T, exampleName string, inputFileName string, inpu
 		"num_reducers": 2,
 		"input_format": inputFormat,
 	}
-	var jobResp struct{ JobID string `json:"job_id"` }
+	var jobResp struct {
+		JobID string `json:"job_id"`
+	}
 	err = authClient.Post("/jobs", submitReq, &jobResp)
 	require.NoError(t, err, "submit job")
 	jobID := jobResp.JobID
@@ -147,10 +155,10 @@ func runExampleTest(t *testing.T, exampleName string, inputFileName string, inpu
 		var getResp map[string]any
 		err = authClient.Get("/jobs/"+jobID, &getResp)
 		require.NoError(t, err)
-		
+
 		status := getResp["status"].(string)
 		t.Logf("Job status: %s", status)
-		
+
 		if status == "COMPLETED" {
 			jobCompleted = true
 			break
