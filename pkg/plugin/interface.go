@@ -26,6 +26,11 @@ type Combiner interface {
 	Combine(key string, values []string) ([]Record, error)
 }
 
+// Partitioner is an optional interface for custom key distribution.
+type Partitioner interface {
+	Partition(key string, numReducers int) (int, error)
+}
+
 // ReduceInput represents a single key and its associated values for the Reducer.
 type ReduceInput struct {
 	Key    string

@@ -63,6 +63,18 @@ type MapReply struct {
 	Error   string
 }
 
+// PartitionerArgs holds the arguments for Partition RPC calls.
+type PartitionerArgs struct {
+	Key         string
+	NumReducers int
+}
+
+// PartitionerReply holds the response from Partition RPC calls.
+type PartitionerReply struct {
+	Partition int
+	Error     string
+}
+
 func (m *MapperRPCClient) Map(inputs []MapInput) ([]Record, error) {
 	var reply MapReply
 	err := m.client.Call("Plugin.Map", &MapArgs{Inputs: inputs}, &reply)
@@ -87,6 +99,18 @@ func (m *MapperRPCClient) Combine(key string, values []string) ([]Record, error)
 		return nil, &PluginError{Message: reply.Error}
 	}
 	return reply.Records, nil
+}
+
+func (m *MapperRPCClient) Partition(key string, numReducers int) (int, error) {
+	var reply PartitionerReply
+	err := m.client.Call("Plugin.Partition", &PartitionerArgs{Key: key, NumReducers: numReducers}, &reply)
+	if err != nil {
+		return 0, err
+	}
+	if reply.Error != "" {
+		return 0, &PluginError{Message: reply.Error}
+	}
+	return reply.Partition, nil
 }
 
 // MapperRPCServer is an RPC server implementation that wraps a Mapper.
@@ -116,6 +140,21 @@ func (s *MapperRPCServer) Combine(args *ReduceArgsSingle, reply *ReduceReply) er
 		return nil
 	}
 	reply.Records = records
+	return nil
+}
+
+func (s *MapperRPCServer) Partition(args *PartitionerArgs, reply *PartitionerReply) error {
+	p, ok := s.Impl.(Partitioner)
+	if !ok {
+		reply.Error = "Partitioner not implemented"
+		return nil
+	}
+	partition, err := p.Partition(args.Key, args.NumReducers)
+	if err != nil {
+		reply.Error = err.Error()
+		return nil
+	}
+	reply.Partition = partition
 	return nil
 }
 
