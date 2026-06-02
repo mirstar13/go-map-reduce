@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: shuffle-service
-        image: starpal/mapreduce-shuffle:beta
+        image: starpal/mapreduce-shuffle-service:beta
         ports:
         - containerPort: 50051
         volumeMounts:

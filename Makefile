@@ -30,6 +30,7 @@ docker-build: buildx-setup
 	docker buildx build --load -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service:$(TAG) .
 	docker buildx build --load -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker:$(TAG) .
 	docker buildx build --load -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder:$(TAG) .
+	docker buildx build --platform $(PLATFORMS) --push -f ./services/shuffle/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-shuffle-service:beta .
 
 docker-build-push: buildx-setup
 	docker buildx build --platform $(PLATFORMS) --push -f ./cmd/cli/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-cli:$(TAG) .
@@ -38,3 +39,4 @@ docker-build-push: buildx-setup
 	docker buildx build --platform $(PLATFORMS) --push -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service:$(TAG) .
 	docker buildx build --platform $(PLATFORMS) --push -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker:$(TAG) .
 	docker buildx build --platform $(PLATFORMS) --push -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder:latest .
+	docker buildx build --platform $(PLATFORMS) --push -f ./services/shuffle/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-shuffle-service:$(TAG) .
