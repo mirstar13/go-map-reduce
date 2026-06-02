@@ -25,4 +25,8 @@ var (
 	focusedPanelStyle = panelStyle.Copy().
 				BorderForeground(activeBorderColor).
 				BorderTopBackground(activeBorderColor)
+
+	globalStatusStyle = panelStyle.Copy()
+	shuffleResourceStyle = panelStyle.Copy()
+	taskInspectorStyle = panelStyle.Copy()
 )

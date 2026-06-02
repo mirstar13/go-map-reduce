@@ -11,6 +11,7 @@ import (
 	"github.com/mirstar13/go-map-reduce/cmd/cli/client"
 	"github.com/mirstar13/go-map-reduce/cmd/cli/config"
 	"github.com/mirstar13/go-map-reduce/db"
+	"github.com/mirstar13/go-map-reduce/services/ui/metrics"
 )
 
 type tickMsg time.Time
@@ -38,24 +39,54 @@ func fetchJobs(c *client.Client) tea.Cmd {
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
+	_, err := config.Load()
+	if err == nil {
+		m.isLoggedIn = true
+	}
+	if !m.isLoggedIn {
+		return m.authModel.Init()
+	}
 	return tea.Batch(
 		doTick(),
 		fetchJobs(m.client),
+		fetchMetrics(m.MetricsClient),
 	)
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if !m.isLoggedIn {
+		authModel, authCmd := m.authModel.Update(msg)
+		m.authModel = authModel.(LoginModel)
+
+		if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "enter" {
+			// Basic login validation
+			m.isLoggedIn = true
+			return m, tea.Batch(doTick(), fetchJobs(m.client), fetchMetrics(m.MetricsClient))
+		}
+
+		return m, authCmd
+	}
+
 	var cmds []tea.Cmd
+
+	// Update navigation model
+	navModel, navCmd := m.nav.Update(msg)
+	m.nav = navModel
+	cmds = append(cmds, navCmd)
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.jobList.SetSize(msg.Width/2-4, msg.Height/2-4)
 		m.progress.Width = msg.Width/2 - 8
+		m.nav.list.SetSize(20, msg.Height-2)
 
 	case tickMsg:
-		return m, tea.Batch(doTick(), fetchJobs(m.client))
+		return m, tea.Batch(append(cmds, doTick(), fetchJobs(m.client), fetchMetrics(m.MetricsClient))...)
+
+	case metricsMsg:
+		m.MetricsData = metrics.ClusterMetrics(msg)
+		return m, tea.Batch(cmds...)
 
 	case jobsMsg:
 		m.jobs = msg
@@ -65,11 +96,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.jobList.SetItems(items)
 		m.err = nil
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	case errorMsg:
 		m.err = msg
-		return m, nil
+		return m, tea.Batch(cmds...)
 
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -77,18 +108,37 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "tab":
-			m.focused = (m.focused + 1) % 3
+			if m.activeView == createUserFormView {
+				m.activeView = roleAssignmentFormView
+			} else if m.activeView == roleAssignmentFormView {
+				m.activeView = createUserFormView
+			} else {
+				m.focused = (m.focused + 1) % 3
+			}
 			return m, nil
+		case "enter":
+			if selected, ok := m.nav.list.SelectedItem().(navItem); ok {
+				switch selected.title {
+				case "Settings":
+					m.activeView = jobFormView
+				case "Admin":
+					m.activeView = createUserFormView
+				default:
+					m.activeView = dashboardView
+				}
+			}
 		}
 	}
 
 	// Only pass key messages to the list if it's focused
-	if m.focused == jobsPanel {
+	if m.focused == taskInspectorPanel {
+		var cmd tea.Cmd
 		m.jobList, cmd = m.jobList.Update(msg)
 		cmds = append(cmds, cmd)
 	} else {
 		// Non-key messages should still be passed (like WindowSizeMsg)
 		if _, ok := msg.(tea.KeyMsg); !ok {
+			var cmd tea.Cmd
 			m.jobList, cmd = m.jobList.Update(msg)
 			cmds = append(cmds, cmd)
 		}
@@ -97,74 +147,64 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m model) View() string {
+func (m *model) View() string {
 	if m.quitting {
 		return "Bye!\n"
 	}
 
-	header := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(purple).
-		Padding(0, 1).
-		Render(" MAPREDUCE MISSION CONTROL ")
-
-	// Top Row
-	healthText := "Health: OK"
-	healthStyle := panelStyle
-	if m.err != nil {
-		healthText = fmt.Sprintf("Health: ERROR (%v)", m.err)
-		healthStyle = panelStyle.BorderForeground(lipgloss.Color("#f7768e"))
+	if !m.isLoggedIn {
+		return m.authModel.View()
 	}
-	if m.focused == healthPanel {
-		healthStyle = focusedPanelStyle
-	}
-	health := healthStyle.Render(healthText)
 
-	// Progress
-	progVal := 0.0
-	statusText := "No active job selected"
-	if len(m.jobs) > 0 {
-		idx := m.jobList.Index()
-		if idx >= 0 && idx < len(m.jobs) {
-			job := m.jobs[idx]
-			statusText = fmt.Sprintf("Job %s: %s", job.JobID.String()[:8], job.Status)
-			switch job.Status {
-			case "completed":
-				progVal = 1.0
-			case "running":
-				progVal = 0.45 // Mock progress
-			case "failed":
-				progVal = 0.0
-			}
+	nav := m.nav.View()
+
+	var content string
+	switch m.activeView {
+	case jobFormView:
+		content = m.form.View()
+	case createUserFormView:
+		content = m.userForm.View()
+	case roleAssignmentFormView:
+		content = m.roleForm.View()
+	default:
+		header := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(purple).
+			Padding(0, 1).
+			Render(" MAPREDUCE MISSION CONTROL ")
+
+		// 1. Global Status Panel
+		statusText := fmt.Sprintf("Nodes: %d\nTasks: %d", m.MetricsData.ActiveNodes, m.MetricsData.ActiveTasks)
+		statusStyle := globalStatusStyle
+		if m.focused == globalStatusPanel {
+			statusStyle = focusedPanelStyle
 		}
-	}
-	progress := panelStyle.Render(
-		lipgloss.JoinVertical(lipgloss.Left,
-			"Active Job Progress",
-			statusText,
-			m.progress.ViewAs(progVal),
-		),
-	)
-	topRow := lipgloss.JoinHorizontal(lipgloss.Top, health, progress)
+		globalStatus := statusStyle.Render(lipgloss.JoinVertical(lipgloss.Left, "Global Status", statusText))
 
-	// Bottom Row
-	jobList := m.jobList.View()
-	jobsStyle := panelStyle
-	if m.focused == jobsPanel {
-		jobsStyle = focusedPanelStyle
-	}
-	jobs := jobsStyle.Render(jobList)
+		// 2. Shuffle/Resource Panel
+		resourceText := fmt.Sprintf("Shuffle: %v\nMemory: %v", m.MetricsData.ShuffleProgress, m.MetricsData.MemoryUsage)
+		resourceStyle := shuffleResourceStyle
+		if m.focused == shuffleResourcePanel {
+			resourceStyle = focusedPanelStyle
+		}
+		shuffleResource := resourceStyle.Render(lipgloss.JoinVertical(lipgloss.Left, "Shuffle/Resource", resourceText))
 
-	logsText := "Logs..."
-	logsStyle := panelStyle
-	if m.focused == logsPanel {
-		logsStyle = focusedPanelStyle
-	}
-	logs := logsStyle.Render(logsText)
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, jobs, logs)
+		// 3. Task Inspector Panel
+		jobList := m.jobList.View()
+		taskStyle := taskInspectorStyle
+		if m.focused == taskInspectorPanel {
+			taskStyle = focusedPanelStyle
+		}
+		taskInspector := taskStyle.Render(lipgloss.JoinVertical(lipgloss.Left, "Task Inspector", jobList))
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, topRow, bottomRow)
+		content = lipgloss.JoinVertical(lipgloss.Left, header,
+			lipgloss.JoinHorizontal(lipgloss.Top, globalStatus, shuffleResource),
+			taskInspector,
+		)
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Top, nav, content)
 }
 
 func newClient(cfg *config.Config) *client.Client {
@@ -175,8 +215,9 @@ func main() {
 	// Initialize a client
 	cfg, _ := config.Load()
 	c := newClient(cfg)
+	mc := metrics.NewClient(cfg.ServerURL)
 
-	p := tea.NewProgram(initialModel(c), tea.WithAltScreen())
+	p := tea.NewProgram(initialModel(c, mc), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v", err)
 		os.Exit(1)
