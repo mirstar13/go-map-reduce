@@ -77,6 +77,11 @@ func (h *TaskHandler) CompleteMapTask(c fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "could not get task"})
 	}
 
+	if task.Status == "COMPLETED" {
+		h.log.Info("map task already completed", zap.String("task_id", taskID.String()))
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
+	}
+
 	if err := h.queries.MarkMapTaskCompleted(c.Context(), db.MarkMapTaskCompletedParams{
 		TaskID: taskID,
 		OutputLocations: pqtype.NullRawMessage{

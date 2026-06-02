@@ -24,7 +24,7 @@ spec:
 
       containers:
         - name: builder
-          image: starpal/mapreduce-builder:latest
+          image: starpal/mapreduce-builder:beta
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -352,18 +352,25 @@ const updateJobInputAndStatus = `-- name: UpdateJobInputAndStatus :exec
 UPDATE jobs
 SET 
     input_path = $2,
-    status = $3
+    input_bucket = $3,
+    status = $4
 WHERE job_id = $1
 `
 
 type UpdateJobInputAndStatusParams struct {
-	JobID     uuid.UUID `json:"job_id"`
-	InputPath string    `json:"input_path"`
-	Status    string    `json:"status"`
+	JobID       uuid.UUID `json:"job_id"`
+	InputPath   string    `json:"input_path"`
+	InputBucket string    `json:"input_bucket"`
+	Status      string    `json:"status"`
 }
 
 func (q *Queries) UpdateJobInputAndStatus(ctx context.Context, arg UpdateJobInputAndStatusParams) error {
-	_, err := q.exec(ctx, q.updateJobInputAndStatusStmt, updateJobInputAndStatus, arg.JobID, arg.InputPath, arg.Status)
+	_, err := q.exec(ctx, q.updateJobInputAndStatusStmt, updateJobInputAndStatus,
+		arg.JobID,
+		arg.InputPath,
+		arg.InputBucket,
+		arg.Status,
+	)
 	return err
 }
 

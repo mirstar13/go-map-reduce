@@ -336,7 +336,7 @@ func (m *mockQuerier) GetMapTasksByJob(ctx context.Context, jobID uuid.UUID) ([]
 	if m.getMapTasksByJobFn != nil {
 		return m.getMapTasksByJobFn(ctx, jobID)
 	}
-	panic("mockQuerier.GetMapTasksByJob: not implemented")
+	return nil, nil
 }
 func (m *mockQuerier) GetMapTasksByJobAndStatus(ctx context.Context, arg db.GetMapTasksByJobAndStatusParams) ([]db.MapTask, error) {
 	if m.getMapTasksByJobAndStatusFn != nil {
@@ -378,7 +378,7 @@ func (m *mockQuerier) GetReduceTasksByJob(ctx context.Context, jobID uuid.UUID) 
 	if m.getReduceTasksByJobFn != nil {
 		return m.getReduceTasksByJobFn(ctx, jobID)
 	}
-	panic("mockQuerier.GetReduceTasksByJob: not implemented")
+	return nil, nil
 }
 func (m *mockQuerier) GetReduceTasksByJobAndStatus(ctx context.Context, arg db.GetReduceTasksByJobAndStatusParams) ([]db.ReduceTask, error) {
 	if m.getReduceTasksByJobAndStatusFn != nil {
@@ -493,7 +493,7 @@ var testCfg = &config.Config{
 func newSupervisor(job db.Job, q db.Querier, spl interfaces.Splitter, disp interfaces.Dispatcher) *Supervisor {
 	reg := NewRegistry()
 	log, _ := zap.NewDevelopment()
-	return New(job, q, spl, disp, nil, testCfg, log, reg, nil)
+	return New(job, q, spl, disp, nil, testCfg, log, reg, nil, nil)
 }
 
 func baseJob(status string) db.Job {
@@ -1204,7 +1204,7 @@ func TestRun_RegistersAndDeregistersFromRegistry(t *testing.T) {
 		getJobFn: func(_ context.Context, _ uuid.UUID) (db.Job, error) { return job, nil },
 	}
 
-	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg, nil)
+	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -1245,7 +1245,7 @@ func TestRun_NotifyChannel_TriggersStep(t *testing.T) {
 	}
 
 	reg := NewRegistry()
-	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg, nil)
+	sup := New(job, q, nil, &mockDispatcher{}, nil, testCfg, zap.NewNop(), reg, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

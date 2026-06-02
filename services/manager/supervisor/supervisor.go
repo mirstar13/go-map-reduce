@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -74,6 +75,12 @@ type Supervisor struct {
 	registry   *Registry
 	tracker    *shuffle.Tracker
 
+	// LATE metrics
+	mu                 sync.RWMutex
+	completedDurations []time.Duration
+	shadowJobs         map[uuid.UUID][]string // TaskID -> []JobNames
+	lastKnownCompleted map[uuid.UUID]bool
+
 	// notify is poked by task-callback handlers for an immediate state re-eval.
 	notify chan struct{}
 
@@ -94,18 +101,21 @@ func New(
 	onTerminal func(context.Context, uuid.UUID),
 ) *Supervisor {
 	return &Supervisor{
-		jobID:      job.JobID,
-		job:        job,
-		queries:    queries,
-		splitter:   spl,
-		dispatcher: disp,
-		minio:      minio,
-		cfg:        cfg,
-		log:        log.With(zap.String("job_id", job.JobID.String())),
-		registry:   registry,
-		tracker:    tracker,
-		notify:     make(chan struct{}, 1),
-		onTerminal: onTerminal,
+		jobID:              job.JobID,
+		job:                job,
+		queries:            queries,
+		splitter:           spl,
+		dispatcher:         disp,
+		minio:              minio,
+		cfg:                cfg,
+		log:                log.With(zap.String("job_id", job.JobID.String())),
+		registry:           registry,
+		tracker:            tracker,
+		notify:             make(chan struct{}, 1),
+		onTerminal:         onTerminal,
+		completedDurations: make([]time.Duration, 0),
+		shadowJobs:         make(map[uuid.UUID][]string),
+		lastKnownCompleted: make(map[uuid.UUID]bool),
 	}
 }
 
@@ -292,26 +302,52 @@ func (s *Supervisor) checkMapPhase(ctx context.Context) error {
 		zap.Int64("total", counts.Total),
 	)
 
-	// Straggler Mitigation (Backup Tasks):
-	// If most tasks are done, re-dispatch everything that isn't finished.
-	if counts.Total > 10 && float64(counts.Completed)/float64(counts.Total) > 0.95 {
-		nonDone, _ := s.queries.GetMapTasksByJob(ctx, s.jobID)
-		for _, task := range nonDone {
-			if task.Status != "COMPLETED" && task.Status != "FAILED" && task.RetryCount < int32(s.cfg.TaskMaxRetries) {
-				s.log.Info("dispatching backup map task for straggler", zap.Int32("index", task.TaskIndex))
-				// We don't mark it RUNNING in the DB yet to avoid breaking state,
-				// but the dispatcher creates a new K8s Job.
-				_, _ = s.dispatcher.DispatchMap(ctx, dispatcher.MapTaskSpec{
-					TaskID:      task.TaskID.String(),
-					JobID:       s.jobID.String(),
-					TaskIndex:   int(task.TaskIndex),
-					InputFile:   task.InputFile,
-					InputOffset: task.InputOffset,
-					InputLength: task.InputLength,
-					MapperPath:  s.job.MapperPath,
-					NumReducers: int(s.job.NumReducers),
-					InputBucket: s.job.InputBucket,
-				})
+	// LATE Straggler Mitigation (Speculative Execution):
+	s.updateMetrics(ctx)
+	median := s.calculateMedian()
+
+	tasks, _ := s.queries.GetMapTasksByJob(ctx, s.jobID)
+	for _, task := range tasks {
+		// If task just completed, kill its shadow jobs
+		if task.Status == "COMPLETED" {
+			s.mu.RLock()
+			known := s.lastKnownCompleted[task.TaskID]
+			s.mu.RUnlock()
+			if !known {
+				s.KillShadowJobs(ctx, task.TaskID)
+				s.mu.Lock()
+				s.lastKnownCompleted[task.TaskID] = true
+				s.mu.Unlock()
+			}
+			continue
+		}
+
+		if median > 0 && counts.Completed > 0 {
+			if task.Status == "RUNNING" && task.StartedAt.Valid {
+				elapsed := time.Since(task.StartedAt.Time)
+				if elapsed > 2*median {
+					s.log.Info("LATE: detected map straggler, launching shadow task",
+						zap.Int32("index", task.TaskIndex),
+						zap.Duration("elapsed", elapsed),
+						zap.Duration("median", median))
+
+					jobName, err := s.dispatcher.DispatchMap(ctx, dispatcher.MapTaskSpec{
+						TaskID:      task.TaskID.String(),
+						JobID:       s.jobID.String(),
+						TaskIndex:   int(task.TaskIndex),
+						InputFile:   task.InputFile,
+						InputOffset: task.InputOffset,
+						InputLength: task.InputLength,
+						MapperPath:  s.job.MapperPath,
+						NumReducers: int(s.job.NumReducers),
+						InputBucket: s.job.InputBucket,
+					})
+					if err == nil {
+						s.mu.Lock()
+						s.shadowJobs[task.TaskID] = append(s.shadowJobs[task.TaskID], jobName)
+						s.mu.Unlock()
+					}
+				}
 			}
 		}
 	}
@@ -417,37 +453,65 @@ func (s *Supervisor) checkReducePhase(ctx context.Context) error {
 		zap.Int64("total", counts.Total),
 	)
 
-	// Straggler Mitigation (Backup Tasks):
-	if counts.Total > 5 && float64(counts.Completed)/float64(counts.Total) > 0.95 {
-		nonDone, _ := s.queries.GetReduceTasksByJob(ctx, s.jobID)
-		for _, task := range nonDone {
-			if task.Status != "COMPLETED" && task.Status != "FAILED" && task.RetryCount < int32(s.cfg.TaskMaxRetries) {
-				s.log.Info("dispatching backup reduce task for straggler", zap.Int32("index", task.TaskIndex))
-				
-				// Get source nodes from shuffle tracker
-				sourceNodes := s.tracker.GetSourceNodes(s.jobID)
-				type loc struct {
-					ReducerIndex int    `json:"reducer_index"`
-					Path         string `json:"path"`
-				}
-				var inputLocs []loc
-				for _, nodeIP := range sourceNodes {
-					inputLocs = append(inputLocs, loc{
-						ReducerIndex: int(task.TaskIndex),
-						Path:         fmt.Sprintf("%s:50051", nodeIP),
-					})
-				}
-				locsJSON, _ := json.Marshal(inputLocs)
+	// LATE Straggler Mitigation (Speculative Execution):
+	s.updateMetrics(ctx)
+	median := s.calculateMedian()
 
-				_, _ = s.dispatcher.DispatchReduce(ctx, dispatcher.ReduceTaskSpec{
-					TaskID:         task.TaskID.String(),
-					JobID:          s.jobID.String(),
-					TaskIndex:      int(task.TaskIndex),
-					ReducerPath:    s.job.ReducerPath,
-					InputLocations: json.RawMessage(locsJSON),
-					OutputBucket:   s.job.OutputBucket,
-					OutputPath:     s.job.OutputPath,
-				})
+	tasks, _ := s.queries.GetReduceTasksByJob(ctx, s.jobID)
+	for _, task := range tasks {
+		// If task just completed, kill its shadow jobs
+		if task.Status == "COMPLETED" {
+			s.mu.RLock()
+			known := s.lastKnownCompleted[task.TaskID]
+			s.mu.RUnlock()
+			if !known {
+				s.KillShadowJobs(ctx, task.TaskID)
+				s.mu.Lock()
+				s.lastKnownCompleted[task.TaskID] = true
+				s.mu.Unlock()
+			}
+			continue
+		}
+
+		if median > 0 && counts.Completed > 0 {
+			if task.Status == "RUNNING" && task.StartedAt.Valid {
+				elapsed := time.Since(task.StartedAt.Time)
+				if elapsed > 2*median {
+					s.log.Info("LATE: detected reduce straggler, launching shadow task",
+						zap.Int32("index", task.TaskIndex),
+						zap.Duration("elapsed", elapsed),
+						zap.Duration("median", median))
+
+					// Get source nodes from shuffle tracker
+					sourceNodes := s.tracker.GetSourceNodes(s.jobID)
+					type loc struct {
+						ReducerIndex int    `json:"reducer_index"`
+						Path         string `json:"path"`
+					}
+					var inputLocs []loc
+					for _, nodeIP := range sourceNodes {
+						inputLocs = append(inputLocs, loc{
+							ReducerIndex: int(task.TaskIndex),
+							Path:         fmt.Sprintf("%s:50051", nodeIP),
+						})
+					}
+					locsJSON, _ := json.Marshal(inputLocs)
+
+					jobName, err := s.dispatcher.DispatchReduce(ctx, dispatcher.ReduceTaskSpec{
+						TaskID:         task.TaskID.String(),
+						JobID:          s.jobID.String(),
+						TaskIndex:      int(task.TaskIndex),
+						ReducerPath:    s.job.ReducerPath,
+						InputLocations: json.RawMessage(locsJSON),
+						OutputBucket:   s.job.OutputBucket,
+						OutputPath:     s.job.OutputPath,
+					})
+					if err == nil {
+						s.mu.Lock()
+						s.shadowJobs[task.TaskID] = append(s.shadowJobs[task.TaskID], jobName)
+						s.mu.Unlock()
+					}
+				}
 			}
 		}
 	}
@@ -661,5 +725,65 @@ func (s *Supervisor) checkBuildPhase(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Supervisor) updateMetrics(ctx context.Context) {
+	tasks, err := s.queries.GetMapTasksByJob(ctx, s.jobID)
+	if err != nil {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.completedDurations = s.completedDurations[:0]
+	for _, t := range tasks {
+		if t.Status == "COMPLETED" && t.StartedAt.Valid && t.CompletedAt.Valid {
+			s.completedDurations = append(s.completedDurations, t.CompletedAt.Time.Sub(t.StartedAt.Time))
+		}
+	}
+
+	// Also do for reduce tasks if in reduce phase
+	redTasks, err := s.queries.GetReduceTasksByJob(ctx, s.jobID)
+	if err == nil {
+		for _, t := range redTasks {
+			if t.Status == "COMPLETED" && t.StartedAt.Valid && t.CompletedAt.Valid {
+				s.completedDurations = append(s.completedDurations, t.CompletedAt.Time.Sub(t.StartedAt.Time))
+			}
+		}
+	}
+}
+
+func (s *Supervisor) calculateMedian() time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if len(s.completedDurations) == 0 {
+		return 0
+	}
+
+	durations := make([]time.Duration, len(s.completedDurations))
+	copy(durations, s.completedDurations)
+	sort.Slice(durations, func(i, j int) bool {
+		return durations[i] < durations[j]
+	})
+
+	mid := len(durations) / 2
+	if len(durations)%2 == 0 {
+		return (durations[mid-1] + durations[mid]) / 2
+	}
+	return durations[mid]
+}
+
+func (s *Supervisor) KillShadowJobs(ctx context.Context, taskID uuid.UUID) {
+	s.mu.Lock()
+	jobs := s.shadowJobs[taskID]
+	delete(s.shadowJobs, taskID)
+	s.mu.Unlock()
+
+	for _, name := range jobs {
+		s.log.Info("killing shadow job", zap.String("job_name", name))
+		_ = s.dispatcher.DeleteJob(ctx, name)
+	}
 }
 

@@ -36,14 +36,14 @@ func NewMinioClient(cfg *config.Config) (*MinioClient, error) {
 // UploadInput streams a file to the `input` bucket.
 // Returns the object path (key) that the caller can pass to the Manager.
 func (m *MinioClient) UploadInput(ctx context.Context, filename string, r io.Reader, size int64) (string, error) {
-	key := objectKey("input", filename)
+	key := objectKey("", filename)
 	return m.upload(ctx, m.cfg.MinioBucketInput, key, r, size, contentType(filename))
 }
 
 // UploadCode streams a mapper or reducer script to the `code` bucket.
 // Returns the object path the caller can pass to the Manager.
 func (m *MinioClient) UploadCode(ctx context.Context, filename string, r io.Reader, size int64) (string, error) {
-	key := objectKey("code", filename)
+	key := objectKey("", filename)
 	return m.upload(ctx, m.cfg.MinioBucketCode, key, r, size, contentType(filename))
 }
 
@@ -106,12 +106,17 @@ func objectKey(prefix, filename string) string {
 	// Sanitise: replace spaces with underscores.
 	base = strings.ReplaceAll(base, " ", "_")
 
+	var key string
 	if dir == "." || dir == "/" {
-		return fmt.Sprintf("%s/%s-%s", prefix, id, base)
+		key = fmt.Sprintf("%s-%s", id, base)
+	} else {
+		key = fmt.Sprintf("%s/%s-%s", filepath.ToSlash(dir), id, base)
 	}
-	// Preserve directory structure
-	dir = filepath.ToSlash(dir)
-	return fmt.Sprintf("%s/%s/%s-%s", prefix, dir, id, base)
+
+	if prefix == "" {
+		return key
+	}
+	return prefix + "/" + key
 }
 
 // contentType infers a content-type from the file extension.

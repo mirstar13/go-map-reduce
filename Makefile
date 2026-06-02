@@ -29,7 +29,7 @@ docker-build: buildx-setup
 	docker buildx build --load -f ./services/manager/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-manager-service:$(TAG) .
 	docker buildx build --load -f ./services/ui/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-ui-service:$(TAG) .
 	docker buildx build --load -f ./services/worker/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-worker:$(TAG) .
-	docker buildx build --load -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder:latest .
+	docker buildx build --load -f ./services/builder/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-builder:$(TAG) .
 
 docker-build-push: buildx-setup
 	docker buildx build --platform $(PLATFORMS) --push -f ./cmd/cli/Dockerfile -t $(DOCKER_REGISTRY)/mapreduce-cli:$(TAG) .

@@ -101,7 +101,8 @@ WHERE job_id = $1;
 UPDATE jobs
 SET 
     input_path = $2,
-    status = $3
+    input_bucket = $3,
+    status = $4
 WHERE job_id = $1;
 
 
