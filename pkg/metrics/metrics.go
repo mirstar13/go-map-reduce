@@ -53,12 +53,19 @@ var (
 		[]string{"type"},
 	)
 
-	// ShuffleBytesTotal tracks the total bytes transferred through the shuffle service.
-	ShuffleBytesTotal = promauto.NewCounterVec(
+	// ShufflePushBytesTotal tracks the total bytes pushed to the shuffle service.
+	ShufflePushBytesTotal = promauto.NewCounter(
 		prometheus.CounterOpts{
-			Name: "mapreduce_shuffle_bytes_total",
-			Help: "Total bytes transferred through the shuffle service by direction (push, pull).",
+			Name: "mapreduce_shuffle_push_bytes_total",
+			Help: "Total bytes pushed to the shuffle service.",
 		},
-		[]string{"direction"},
+	)
+
+	// ShufflePullBytesTotal tracks the total bytes pulled from the shuffle service.
+	ShufflePullBytesTotal = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "mapreduce_shuffle_pull_bytes_total",
+			Help: "Total bytes pulled from the shuffle service.",
+		},
 	)
 )
