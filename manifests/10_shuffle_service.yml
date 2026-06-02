@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: shuffle-service
+  namespace: mapreduce
+spec:
+  selector:
+    matchLabels:
+      app: shuffle-service
+  template:
+    metadata:
+      labels:
+        app: shuffle-service
+    spec:
+      containers:
+      - name: shuffle-service
+        image: starpal/mapreduce-shuffle:beta
+        ports:
+        - containerPort: 50051
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        emptyDir:
+          medium: Memory
